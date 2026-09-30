@@ -3,7 +3,7 @@ const params=new URLSearchParams(location.search);
 const rawId=params.get("id")||"";
 const doiParam=(params.get("doi")||"").trim();
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
-const clean=s=>String(s??"").replace(/<[^>]*>/g,"").replace(/\s+/g," ").trim();
+const clean=s=>String(s??"").replace(/<[^>]*>/g,"").replace(/\s+/g," ").trim();function safeHref(value){const v=String(value||"").trim();if(/^https?:\/\//i.test(v)||/^(?:article|author|journal|search|saved|history)\.html(?:[?#].*)?$/i.test(v))return v;return"#"}
 function reconstruct(idx){if(!idx)return"";const words=[];Object.entries(idx).forEach(([word,positions])=>positions.forEach(p=>words[p]=word));return words.join(" ")}
 function readSaved(){try{return JSON.parse(localStorage.getItem("academicSaved")||"[]")}catch{return[]}}
 function saved(id){return readSaved().some(x=>x.id===id)}
@@ -50,7 +50,7 @@ async function run(){
   localHistory(loaded.recordId,title,authorNames,venue,year);
   const topics=(w.topics||[]).map(x=>x.display_name).filter(Boolean).slice(0,6);
   const concepts=topics.length?topics:(w.concepts||[]).filter(x=>x.score>.25).map(x=>x.display_name).slice(0,6);
-  const sourceHref=loaded.source==="OpenAlex"&&/^https:\/\/openalex\.org\//.test(w.id)?w.id:(doi?"https://doi.org/"+encodeURIComponent(doi):w.id);
+  const sourceHref=safeHref(loaded.source==="OpenAlex"&&/^https:\/\/openalex\.org\//.test(w.id)?w.id:(doi?"https://doi.org/"+encodeURIComponent(doi):w.id));
   root.innerHTML=
     '<div id="lead"><div class="kicker">RESEARCH RECORD · '+esc(loaded.source.toUpperCase())+'</div><h1 class="article-title">'+esc(title)+'</h1><p class="lead">'+esc(authorNames.slice(0,5).join(", ")||"Unknown authors")+'</p></div>'+
     '<div class="article-layout"><div class="article-body"><div class="note">Live scholarly metadata retrieved at page load. '+esc(w.publication_date||"")+'</div>'+
