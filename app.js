@@ -30,16 +30,9 @@ const SEARCH_ALIASES=[
   [/\bli[- ]?ion\b/gi,"lithium-ion"],
   [/\blfp\b/gi,"lithium iron phosphate"],
   [/\bnmc\b/gi,"nickel manganese cobalt"],
-  [/\bev\b/gi,"electric vehicle"],
-  [/\bsolar pv\b/gi,"photovoltaic"],
-  [/\bpv\b/gi,"photovoltaic"],
   [/\bco2\b/gi,"carbon dioxide"],
   [/\bcrispr[- ]?cas9\b/gi,"CRISPR Cas9"],
-  [/\bml\b/gi,"machine learning"],
-  [/\bai\b/gi,"artificial intelligence"],
-  [/\bpeg\b/gi,"polyethylene glycol"],
-  [/\bsem\b/gi,"scanning electron microscopy"],
-  [/\btem\b/gi,"transmission electron microscopy"]
+  [/\bpeg\b/gi,"polyethylene glycol"]
 ];
 function searchVariants(core){
   const base=core.trim(),variants=[base];
