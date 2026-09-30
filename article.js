@@ -49,7 +49,7 @@ async function citedBy(work){
     return data.results||[];
   }catch{return[]}
 }
-function norm(value){return String(value||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").replace(/\\s+/g," ").trim()}
+function norm(value){return String(value||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").replace(/\s+/g," ").trim()}
 function relationReasons(item,work,kind){
   const reasons=[];
   if(kind==="references"){reasons.push("Referenced by this paper");return reasons}
