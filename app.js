@@ -26,6 +26,39 @@ function reconstructInverted(index){
 
 const STOP=new Set("a an and are as at be by can could did do does for from how i in is it me my of on or our research the this to what when where which why with would you your".split(" "));
 function tokens(q){return q.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/).filter(Boolean).filter(x=>x.length>1&&!STOP.has(x))}
+const SEARCH_ALIASES=[
+  [/\bli[- ]?ion\b/gi,"lithium-ion"],
+  [/\blfp\b/gi,"lithium iron phosphate"],
+  [/\bnmc\b/gi,"nickel manganese cobalt"],
+  [/\bev\b/gi,"electric vehicle"],
+  [/\bsolar pv\b/gi,"photovoltaic"],
+  [/\bpv\b/gi,"photovoltaic"],
+  [/\bco2\b/gi,"carbon dioxide"],
+  [/\bcrispr[- ]?cas9\b/gi,"CRISPR Cas9"],
+  [/\bml\b/gi,"machine learning"],
+  [/\bai\b/gi,"artificial intelligence"],
+  [/\bpeg\b/gi,"polyethylene glycol"],
+  [/\bsem\b/gi,"scanning electron microscopy"],
+  [/\btem\b/gi,"transmission electron microscopy"]
+];
+function searchVariants(core){
+  const base=core.trim(),variants=[base];
+  for(const [pattern,replacement] of SEARCH_ALIASES){
+    if(pattern.test(base)&&pattern.source){
+      pattern.lastIndex=0;
+      const v=base.replace(pattern,replacement).replace(/\s+/g," ").trim();
+      if(v.toLowerCase()!==base.toLowerCase()&&!variants.some(x=>x.toLowerCase()===v.toLowerCase()))variants.push(v);
+      if(variants.length>=3)break;
+    }
+    pattern.lastIndex=0;
+  }
+  return variants;
+}
+function hasExactPhrase(item,core){
+  const phrase=core.trim().toLowerCase().replace(/\s+/g," ");
+  if(!phrase)return false;
+  return String(item.title||"").toLowerCase().replace(/\s+/g," ").includes(phrase);
+}
 function intentOf(q){
   const x=q.trim().toLowerCase(),doi=normalizeDoi(q);
   if(/(^|\s)10\.\d{4,9}\/\S+/i.test(doi))return"identifier";
@@ -60,7 +93,7 @@ function planQuery(q){
   if(intent==="causes")search=core+" mechanism";
   if(intent==="comparison")search=core+" comparison";
   if(intent==="access")search=core+" open access";
-  return{intent,core,search,terms:tokens(core)};
+  return{intent,core,search,terms:tokens(core),variants:searchVariants(core)};
 }
 function relatedQueries(plan){
   const q=plan.core,out=[];
@@ -134,19 +167,19 @@ function mapCrossref(w){
     pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""
   };
 }
-async function searchOpenAlex(q,from,to,sort){
-  const p=new URLSearchParams({search:q,per_page:"30"});
+async function searchOpenAlex(q,from,to,sort,page=1){
+  const p=new URLSearchParams({search:q,per_page:"50",page:String(page)});
   if(from||to)p.set("filter","from_publication_date:"+(from||"1900")+"-01-01,to_publication_date:"+(to||"2100")+"-12-31");
   if(sort==="newest")p.set("sort","publication_date:desc");
   if(sort==="cited")p.set("sort","cited_by_count:desc");
   const data=await request("https://api.openalex.org/works?"+p);
-  return(data.results||[]).map(mapOpenAlex);
+  return{items:(data.results||[]).map(mapOpenAlex),nextPage:(data.meta?.count&&data.results?.length===50)?page+1:null};
 }
-async function searchCrossref(q,from,to){
-  const p=new URLSearchParams({query:q,rows:"30"});
+async function searchCrossref(q,from,to,cursor="*"){
+  const p=new URLSearchParams({query:q,rows:"50",cursor});
   if(from||to)p.set("filter","from-pub-date:"+(from||"1900")+"-01-01,until-pub-date:"+(to||"2100-12-31"));
   const data=await request("https://api.crossref.org/v1/works?"+p);
-  return(data.message?.items||[]).map(mapCrossref);
+  return{items:(data.message?.items||[]).map(mapCrossref),nextCursor:data.message?.["next-cursor"]||""};
 }
 async function exactDoi(doi){
   try{
@@ -189,6 +222,7 @@ function dedupe(records){
 function relevanceScore(item,plan){
   const title=item.title.toLowerCase(),text=(item.title+" "+item.abstract+" "+item.authors+" "+item.venue).toLowerCase();
   let score=0;
+  if(hasExactPhrase(item,plan.core))score+=28;
   const terms=plan.terms;
   if(title===plan.core.toLowerCase())score+=24;
   for(const term of terms){
@@ -306,24 +340,31 @@ async function run(raw){
     let settled=[];
     if(plan.intent==="identifier"){
       const exact=await exactDoi(plan.core);
-      settled=[{status:"fulfilled",value:exact}];
+      settled=[{status:"fulfilled",value:{items:exact,nextPage:null,nextCursor:""}}];
     }else{
       const jobs=[];
-      if(source==="all"||source==="openalex")jobs.push(searchOpenAlex(plan.search,from,to,sort));
-      if(source==="all"||source==="crossref")jobs.push(searchCrossref(plan.search,from,to));
+      const variants=[plan.search,...plan.variants.filter(v=>v!==plan.core&&v!==plan.search)].slice(0,3);
+      for(const variant of variants){
+        if(source==="all"||source==="openalex")jobs.push(searchOpenAlex(variant,from,to,sort,1));
+        if(source==="all"||source==="crossref")jobs.push(searchCrossref(variant,from,to,"*"));
+      }
       settled=await Promise.allSettled(jobs);
-      let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+      let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value.items||[]));
       if(initial.length<5&&plan.search!==plan.core){
         const fallbackJobs=[];
-        if(source==="all"||source==="openalex")fallbackJobs.push(searchOpenAlex(plan.core,from,to,sort));
-        if(source==="all"||source==="crossref")fallbackJobs.push(searchCrossref(plan.core,from,to));
+        if(source==="all"||source==="openalex")fallbackJobs.push(searchOpenAlex(plan.core,from,to,sort,2));
+        if(source==="all"||source==="crossref")fallbackJobs.push(searchCrossref(plan.core,from,to,"*"));
         const fallback=await Promise.allSettled(fallbackJobs);
         if(runId!==searchRun)return;
         settled=settled.concat(fallback);
       }
     }
     if(runId!==searchRun)return;
-    let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+    let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value.items||[]));
+    window.__academicPaging={
+      openalex:Math.max(1,...settled.filter(x=>x.status==="fulfilled").map(x=>x.value.nextPage||1)),
+      crossref:settled.filter(x=>x.status==="fulfilled").map(x=>x.value.nextCursor||"").find(Boolean)||""
+    };
     if(oaOnly)data=data.filter(x=>!!x.openAccess);
     if(abstractOnly)data=data.filter(x=>!!x.abstract);
     if(doiOnly)data=data.filter(x=>!!x.doi);
@@ -335,6 +376,7 @@ async function run(raw){
     baseStatus=data.length+" records found"+(failed?" · one index was unavailable":"")+(data.length?(" · "+abstractCount+" abstracts · "+doiCount+" DOI"+(oaCount?" · "+oaCount+" OA signals":"")):"");
     statusEl.textContent=baseStatus;
     results.innerHTML=data.map(resultCard).join("")||'<div class="note"><strong>No close match found.</strong><br>Try a related search, remove a phrase, or broaden the date range.</div>';
+    if(data.length)results.insertAdjacentHTML("afterend",'<div class="more-results"><button id="loadMore" class="plain-btn" type="button">Load more results</button><span id="loadMoreStatus" class="meta"></span></div>');
     results.removeAttribute("aria-busy");
     applyResultFilter();
     syncCompareControls();
@@ -377,6 +419,35 @@ results?.addEventListener("click",e=>{
 $("#savedBtn")?.addEventListener("click",()=>location.href="saved.html");
 resultFilter?.addEventListener("input",applyResultFilter);
 $("#clearCompare")?.addEventListener("click",()=>{setCompared([]);syncCompareControls();});
+results?.parentElement?.addEventListener("click",async e=>{
+  const button=e.target.closest("#loadMore");
+  if(!button)return;
+  button.disabled=true;
+  const status=document.querySelector("#loadMoreStatus");
+  try{
+    const plan=currentPlan;if(!plan)return;
+    const from=$("#fromYear").value,to=$("#toYear").value,source=$("#source").value,sort=$("#sort").value;
+    const page=window.__academicPaging?.openalex||1,cursor=window.__academicPaging?.crossref||"";
+    const jobs=[];
+    if(source==="all"||source==="openalex")jobs.push(searchOpenAlex(plan.search,from,to,sort,page+1));
+    if(source==="all"||source==="crossref")jobs.push(searchCrossref(plan.search,from,to,cursor||"*"));
+    const more=await Promise.allSettled(jobs);
+    const extra=dedupe(more.filter(x=>x.status==="fulfilled").flatMap(x=>x.value.items||[])).filter(x=>!dataCache.some(y=>y.id===x.id));
+    dataCache=dedupe([...dataCache,...extra]);
+    const merged=[...dataCache];
+    if(sort==="relevance"||plan.intent!=="identifier")merged.sort((a,b)=>relevanceScore(b,plan)-relevanceScore(a,plan));
+    if(sort==="newest")merged.sort((a,b)=>(b.year||"").localeCompare(a.year||""));
+    if(sort==="cited")merged.sort((a,b)=>(b.cited||0)-(a.cited||0));
+    results.innerHTML=merged.map(resultCard).join("");
+    syncCompareControls();
+    applyResultFilter();
+    window.__academicPaging.openalex=more.filter(x=>x.status==="fulfilled").map(x=>x.value.nextPage||null).find(Boolean)||null;
+    window.__academicPaging.crossref=more.filter(x=>x.status==="fulfilled").map(x=>x.value.nextCursor||"").find(Boolean)||"";
+    if(status)status.textContent=extra.length?extra.length+" more results loaded.":"No additional results available.";
+    if(!window.__academicPaging.openalex&&!window.__academicPaging.crossref)button.disabled=true;
+  }catch{if(status)status.textContent="Could not load more results. Try again."}
+  finally{button.disabled=false;}
+});
 $("#source")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
 $("#sort")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
 ["openAccessOnly","abstractOnly","doiOnly","mode"].forEach(id=>$("#"+id)?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}}));
