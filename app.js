@@ -9,7 +9,8 @@ function historyAdd(item){if(!item)return;let a=[];try{a=JSON.parse(localStorage
 function reconstruct(idx){if(!idx)return"";const a=[];Object.entries(idx).forEach(([w,ps])=>ps.forEach(p=>a[p]=w));return a.join(" ")}
 const STOP=new Set("a an and are as at be by can could did do does for from how i in is it me my of on or our research the this to what when where which why with would you your".split(" "));
 function tokens(q){return q.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/).filter(Boolean).filter(x=>x.length>1&&!STOP.has(x))}
-function normalizeDoi(q){return q.trim().replace(/^doi:\s*/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").trim()}\nfunction intentOf(q){const x=q.trim().toLowerCase();if(/\bdoi\b/.test(x)||/^https?:\/\/(?:dx\.)?doi\.org\//i.test(x)||/^doi:\s*10\.\d{4,9}\//i.test(x)||/^10\.\d{4,9}\//.test(x))return"identifier";if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";if(/\b(journal|venue|published in)\b/.test(x))return"venue";if(/\b(latest|recent|newest|202[4-9]|this year)\b/.test(x))return"latest";if(/\b(review|systematic review|survey|literature review)\b/.test(x))return"review";if(/\b(what is|what are|define|definition)\b/.test(x))return"definition";if(/\b(how to)\b/.test(x))return"howto";if(/\b(how does|how do|how can|mechanism|process)\b/.test(x))return"mechanism";if(/\b(why does|why do|why is|causes?)\b/.test(x))return"causes";if(/\b(best|which|compare|comparison|versus|vs\.)\b/.test(x))return"comparison";if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";return"literature"}
+function normalizeDoi(q){return q.trim().replace(/^doi:\s*/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").trim()}
+function intentOf(q){const x=q.trim().toLowerCase();if(/\bdoi\b/.test(x)||/^https?:\/\/(?:dx\.)?doi\.org\//i.test(x)||/^doi:\s*10\.\d{4,9}\//i.test(x)||/^10\.\d{4,9}\//.test(x))return"identifier";if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";if(/\b(journal|venue|published in)\b/.test(x))return"venue";if(/\b(latest|recent|newest|202[4-9]|this year)\b/.test(x))return"latest";if(/\b(review|systematic review|survey|literature review)\b/.test(x))return"review";if(/\b(what is|what are|define|definition)\b/.test(x))return"definition";if(/\b(how to)\b/.test(x))return"howto";if(/\b(how does|how do|how can|mechanism|process)\b/.test(x))return"mechanism";if(/\b(why does|why do|why is|causes?)\b/.test(x))return"causes";if(/\b(best|which|compare|comparison|versus|vs\.)\b/.test(x))return"comparison";if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";return"literature"}
 function stripQuestion(q){return q.replace(/\b(what is|what are|define|definition of|how does|how do|how can|how to|why does|why do|why is|what causes|what cause|who is|who are|tell me about|which|latest research on|recent research on|literature review on|review of)\b/gi," ").replace(/[?]+/g," ").replace(/\s+/g," ").trim()}
 function planQuery(q){const intent=intentOf(q),core=intent==="identifier"?normalizeDoi(q):(stripQuestion(q)||q.trim());let search=core;const terms=tokens(core);if((intent==="mechanism"||intent==="causes")&&terms.length)search=core+" mechanism";if(intent==="review"&&!/\breview\b/i.test(search))search=core+" review";if(intent==="howto")search=core+" method";if(intent==="comparison")search=core+" comparison";return{intent,core,search,terms}}
 function relatedQueries(plan){
@@ -75,7 +76,28 @@ async function run(rawQ){
  const openAccessOnly=$("#openAccessOnly")?.checked;
  const abstractOnly=$("#abstractOnly")?.checked;
  try{
-  let settled=[];\n  let entityPromise=Promise.resolve([]);\n  if(plan.intent==="identifier"){\n    const doiResults=await exactDoi(normalizeDoi(plan.core));\n    settled=[{status:"fulfilled",value:doiResults}];\n  }else{\n    const jobs=[];if(source==="all"||source==="openalex")jobs.push(openalex(plan.search,from,to,effectiveSort));if(source==="all"||source==="crossref")jobs.push(crossref(plan.search,from,to));\n    entityPromise=plan.intent==="author"?openalexAuthors(plan.core):plan.intent==="venue"?openalexSources(plan.core):Promise.resolve([]);\n    settled=await Promise.allSettled(jobs);\n    let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));\n    if(initial.length<5&&plan.search!==plan.core){\n      const fallbackJobs=[];if(source==="all"||source==="openalex")fallbackJobs.push(openalex(plan.core,from,to,effectiveSort));if(source==="all"||source==="crossref")fallbackJobs.push(crossref(plan.core,from,to));\n      const fallback=await Promise.allSettled(fallbackJobs);\n      if(runId!==searchRun)return;\n      settled=settled.concat(fallback);\n    }\n  }\n  if(runId!==searchRun)return;\n  let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));\n  if(openAccessOnly)data=data.filter(x=>x.openAccess);\n  if(abstractOnly)data=data.filter(x=>!!x.abstract);\n  dataCache=data;
+  let settled=[];
+  let entityPromise=Promise.resolve([]);
+  if(plan.intent==="identifier"){
+    const doiResults=await exactDoi(normalizeDoi(plan.core));
+    settled=[{status:"fulfilled",value:doiResults}];
+  }else{
+    const jobs=[];if(source==="all"||source==="openalex")jobs.push(openalex(plan.search,from,to,effectiveSort));if(source==="all"||source==="crossref")jobs.push(crossref(plan.search,from,to));
+    entityPromise=plan.intent==="author"?openalexAuthors(plan.core):plan.intent==="venue"?openalexSources(plan.core):Promise.resolve([]);
+    settled=await Promise.allSettled(jobs);
+    let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+    if(initial.length<5&&plan.search!==plan.core){
+      const fallbackJobs=[];if(source==="all"||source==="openalex")fallbackJobs.push(openalex(plan.core,from,to,effectiveSort));if(source==="all"||source==="crossref")fallbackJobs.push(crossref(plan.core,from,to));
+      const fallback=await Promise.allSettled(fallbackJobs);
+      if(runId!==searchRun)return;
+      settled=settled.concat(fallback);
+    }
+  }
+  if(runId!==searchRun)return;
+  let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+  if(openAccessOnly)data=data.filter(x=>x.openAccess);
+  if(abstractOnly)data=data.filter(x=>!!x.abstract);
+  dataCache=data;
   if(effectiveSort==="relevance")data.sort((a,b)=>answerScore(b,plan)-answerScore(a,plan));else if(effectiveSort==="newest")data.sort((a,b)=>(b.year||"").localeCompare(a.year||""));else data.sort((a,b)=>(b.cited||0)-(a.cited||0));
   const failed=settled.some(x=>x.status==="rejected");const oaCount=data.filter(x=>x.openAccess).length,abstractCount=data.filter(x=>x.abstract).length,retractedCount=data.filter(x=>x.retracted).length;statusEl.textContent=data.length+" records found"+(failed?" · one index was unavailable":"")+(data.length?(" · "+abstractCount+" abstracts · "+oaCount+" OA signals"+(retractedCount?" · "+retractedCount+" retracted":"")):"");results.innerHTML=data.map(card).join("")||'<div class="note"><strong>No close match found.</strong><br>Try one of the related searches above, remove a specific phrase, or broaden the date range.</div>';buildAnswerLayer(plan,data,failed,[]);entityPromise.then(value=>{if(runId===searchRun&&Array.isArray(value))buildAnswerLayer(plan,data,failed,value)}).catch(()=>{});
  }catch(e){if(runId!==searchRun)return;statusEl.textContent="Search could not be completed";results.innerHTML='<div class="note">The scholarly indexes did not respond. Try again in a moment.</div>';if(answerEl)answerEl.innerHTML='<div class="note">No evidence could be loaded for this search. Please retry or use a related search.</div>'}
