@@ -28,7 +28,13 @@ async function run(){
     author=await request("https://api.openalex.org/authors/"+encodeURIComponent(authorId));
   }else{
     const data=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:name,per_page:"5"}));
-    author=data.results?.[0];
+    const matches=(data.results||[]).filter(Boolean);
+    if(!matches.length){message('No matching author record was found. <a href="search.html?q='+encodeURIComponent(name)+'">Search this name in the literature.</a>');return}
+    if(matches.length>1){
+      root.innerHTML='<div class="kicker">AUTHOR MATCHES</div><h1>Choose the researcher.</h1><p class="lead">Several author records match “'+esc(name)+'”. Check institution, works and citations before opening a profile.</p><div class="results author-candidates">'+matches.map(a=>'<article class="result"><h2><a href="author.html?id='+encodeURIComponent((a.id||"").split("/").pop())+'&name='+encodeURIComponent(a.display_name||"")+'">'+esc(a.display_name||"Unknown author")+'</a></h2><div class="meta">'+esc((a.last_known_institutions||[]).map(x=>x.display_name).filter(Boolean).join(", ")||"Institution not listed")+' · '+esc(a.works_count||0)+' works · '+esc(a.cited_by_count||0)+' citations</div></article>').join("")+'</div>';
+      return;
+    }
+    author=matches[0];
   }
   if(!author){message('No matching author record was found. <a href="search.html?q='+encodeURIComponent(name)+'">Search this name in the literature.</a>');return}
   document.title=author.display_name+" — Academic Library";
