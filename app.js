@@ -1,142 +1,337 @@
 const $=s=>document.querySelector(s);
-const form=$("#searchForm"),results=$("#results"),statusEl=$("#status"),answerEl=$("#answerLayer"),suggestionsEl=$("#querySuggestions");
+const form=$("#searchForm"),queryInput=$("#query"),results=$("#results"),statusEl=$("#status");
+const answerEl=$("#answerLayer"),suggestionsEl=$("#querySuggestions"),resultFilter=$("#filterResults");
+
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 const clean=s=>String(s??"").replace(/<[^>]*>/g,"").replace(/\s+/g," ").trim();
-function getSaved(){try{return JSON.parse(localStorage.getItem("academicSaved")||"[]")}catch{return[]}}
-function save(item){if(!item)return;const a=getSaved().filter(x=>x.id!==item.id);a.unshift(item);localStorage.setItem("academicSaved",JSON.stringify(a.slice(0,100)))}
+const safeHref=value=>{const v=String(value||"").trim();return (/^https?:\/\//i.test(v)||/^(?:article|author|journal|search|saved|history)\.html(?:[?#].*)?$/i.test(v))?v:"#"};
+const normalizeDoi=q=>q.trim().replace(/^doi:\s*/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").replace(/^doi\.org\//i,"").replace(/[.,;)>]+$/,"").trim();
+
+function loadJson(key,fallback){try{const v=JSON.parse(localStorage.getItem(key)||"");return v??fallback}catch{return fallback}}
+function getSaved(){return loadJson("academicSaved",[])}
+function saveRecord(item){if(!item)return;const next=[item,...getSaved().filter(x=>x.id!==item.id)].slice(0,100);localStorage.setItem("academicSaved",JSON.stringify(next))}
 function removeSaved(id){localStorage.setItem("academicSaved",JSON.stringify(getSaved().filter(x=>x.id!==id)))}
-function historyAdd(item){if(!item)return;let a=[];try{a=JSON.parse(localStorage.getItem("academicHistory")||"[]")}catch{}a=[item,...a.filter(x=>x.id!==item.id)].slice(0,30);localStorage.setItem("academicHistory",JSON.stringify(a))}
-function reconstruct(idx){if(!idx)return"";const a=[];Object.entries(idx).forEach(([w,ps])=>ps.forEach(p=>a[p]=w));return a.join(" ")}
+function addHistory(item){if(!item)return;const next=[item,...loadJson("academicHistory",[]).filter(x=>x.id!==item.id)].slice(0,30);localStorage.setItem("academicHistory",JSON.stringify(next))}
+
+function reconstructInverted(index){
+  if(!index)return"";
+  const words=[];
+  Object.entries(index).forEach(([word,positions])=>(positions||[]).forEach(p=>{words[p]=word}));
+  return words.join(" ").replace(/\s+/g," ").trim();
+}
+
 const STOP=new Set("a an and are as at be by can could did do does for from how i in is it me my of on or our research the this to what when where which why with would you your".split(" "));
 function tokens(q){return q.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/).filter(Boolean).filter(x=>x.length>1&&!STOP.has(x))}
-function normalizeDoi(q){return q.trim().replace(/^doi:\s*/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").replace(/^doi\.org\//i,"").replace(/[.,;)>]+$/,"").trim()}
-function intentOf(q){const x=q.trim().toLowerCase();if(/\bdoi\b/.test(x)||/^https?:\/\/(?:dx\.)?doi\.org\//i.test(x)||/^doi:\s*10\.\d{4,9}\//i.test(x)||/^10\.\d{4,9}\//.test(x))return"identifier";if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";if(/\b(journal|venue|published in)\b/.test(x))return"venue";if(/\b(latest|recent|newest|this year)\b/.test(x))return"latest";if(/\b(review|systematic review|survey|literature review)\b/.test(x))return"review";if(/\b(what is|what are|define|definition)\b/.test(x))return"definition";if(/\b(how to)\b/.test(x))return"howto";if(/\b(how does|how do|how can|mechanism|process)\b/.test(x))return"mechanism";if(/\b(why does|why do|why is|causes?)\b/.test(x))return"causes";if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";if(/\b(best|which|compare|comparison|versus|vs\.)\b/.test(x))return"comparison";return"literature"}
-function stripQuestion(q){return q.replace(/\b(what is|what are|define|definition of|how does|how do|how can|how to|why does|why do|why is|what causes|what cause|who is|who are|tell me about|which|latest research on|recent research on|literature review on|review of)\b/gi," ").replace(/[?]+/g," ").replace(/\s+/g," ").trim()}
-function planQuery(q){const intent=intentOf(q),core=intent==="identifier"?normalizeDoi(q):(stripQuestion(q)||q.trim());let search=core;const terms=tokens(core);if((intent==="mechanism"||intent==="causes")&&terms.length)search=core+" mechanism";if(intent==="review"&&!/\breview\b/i.test(search))search=core+" review";if(intent==="howto")search=core+" method";if(intent==="comparison")search=core+" comparison";return{intent,core,search,terms}}
+function intentOf(q){
+  const x=q.trim().toLowerCase(),doi=normalizeDoi(q);
+  if(/^10\.\d{4,9}\/\S+$/i.test(doi))return"identifier";
+  if(/^https?:\/\/(?:dx\.)?doi\.org\/10\.\d{4,9}\/\S+$/i.test(x)||/^doi:\s*10\.\d{4,9}\/\S+$/i.test(x))return"identifier";
+  if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";
+  if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";
+  if(/\b(journal|venue|published in)\b/.test(x))return"venue";
+  if(/\b(latest|recent|newest|this year)\b/.test(x))return"latest";
+  if(/\b(review|systematic review|survey|literature review)\b/.test(x))return"review";
+  if(/\b(what is|what are|define|definition|tell me about)\b/.test(x))return"definition";
+  if(/\b(how to)\b/.test(x))return"howto";
+  if(/\b(how does|how do|how can|mechanism|process)\b/.test(x))return"mechanism";
+  if(/\b(why does|why do|why is|what causes|what cause|causes?)\b/.test(x))return"causes";
+  if(/\b(best|which|compare|comparison|versus|vs\.)\b/.test(x))return"comparison";
+  return"literature";
+}
+function stripQuestion(q){
+  return q.replace(/\b(what is|what are|define|definition of|how does|how do|how can|how to|why does|why do|why is|what causes|what cause|who is|who are|tell me about|which|latest research on|recent research on|literature review on|review of)\b/gi," ").replace(/[?]+/g," ").replace(/\s+/g," ").trim();
+}
+function modeIntent(){
+  const mode=$("#mode")?.value||"auto";
+  return mode==="auto"?"":mode;
+}
+function planQuery(q){
+  const forced=modeIntent(),intent=forced||intentOf(q),core=intent==="identifier"?normalizeDoi(q):(stripQuestion(q)||q.trim());
+  let search=core;
+  if(intent==="latest")search=core+" recent research";
+  if(intent==="review")search=/\breview\b/i.test(core)?core:core+" review";
+  if(intent==="definition")search=core+" overview";
+  if(intent==="howto")search=core+" method";
+  if(intent==="mechanism")search=core+" mechanism";
+  if(intent==="causes")search=core+" mechanism";
+  if(intent==="comparison")search=core+" comparison";
+  if(intent==="access")search=core+" open access";
+  return{intent,core,search,terms:tokens(core)};
+}
 function relatedQueries(plan){
- const q=plan.core,out=[];
- if(plan.intent==="definition"){out.push(q+" overview",q+" fundamentals",q+" review")}
- if(plan.intent==="mechanism"||plan.intent==="causes"){out.push(q+" mechanism",q+" review",q+" experimental study")}
- if(plan.intent==="latest"){out.push(q+" recent research",q+" 2026",q+" review")}
- if(plan.intent==="review"){out.push(q+" systematic review",q+" meta-analysis",q+" review")}
- if(plan.intent==="author"){out.push(q+" researcher",q+" authors")}
- if(plan.intent==="venue"){out.push(q+" journal",""+q+" publications")}
- if(plan.intent==="access"){out.push(q+" open access",q+" full text",q+" preprint")}
- if(!out.length){out.push(q+" review",q+" recent research",q+" applications")}
- const seen=new Set();return out.filter(x=>x.trim()&&!seen.has(x.toLowerCase())&&seen.add(x.toLowerCase())).slice(0,3)
+  const q=plan.core,out=[];
+  if(plan.intent==="definition")out.push(q+" fundamentals",q+" review",q+" introduction");
+  else if(plan.intent==="mechanism"||plan.intent==="causes")out.push(q+" mechanism",q+" review",q+" experimental study");
+  else if(plan.intent==="howto")out.push(q+" method",q+" protocol",q+" guide");
+  else if(plan.intent==="latest")out.push(q+" recent research",q+" "+new Date().getFullYear(),q+" review");
+  else if(plan.intent==="review")out.push(q+" systematic review",q+" meta-analysis",q+" review");
+  else if(plan.intent==="author")out.push(q+" researcher",q+" authors");
+  else if(plan.intent==="venue")out.push(q+" journal",q+" publications");
+  else if(plan.intent==="access")out.push(q+" open access",q+" full text",q+" preprint");
+  else if(plan.intent==="comparison")out.push(q+" comparison",q+" review",q+" evidence");
+  else out.push(q+" review",q+" recent research",q+" applications");
+  const seen=new Set();
+  return out.filter(x=>x.trim()&&!seen.has(x.toLowerCase())&&seen.add(x.toLowerCase())).slice(0,3);
 }
-function intentLabel(i){return({identifier:"Identifier lookup",author:"Author-focused search",venue:"Publication venue search",latest:"Recent research",review:"Review / literature survey",definition:"Concept / definition",howto:"How-to / methods",mechanism:"How it works / mechanism",causes:"Causes / explanation",comparison:"Comparison / evidence",access:"Full-text / access-focused search",literature:"Literature discovery"})[i]||"Literature discovery"}
-function evidenceExcerpt(textValue,terms){const text=clean(textValue);if(!text)return"";const sentences=text.split(/(?<=[.!?])\s+/);let best=sentences[0]||text,bestScore=0;sentences.forEach(s=>{const low=s.toLowerCase();const score=terms.reduce((n,t)=>n+(low.includes(t)?1:0),0);if(score>bestScore){best=s;bestScore=score}});return best.slice(0,420)}
-function buildAnswerLayer(plan,data,failed,entities=[]){
- if(!answerEl)return;
- const evidence=data.filter(x=>x.abstract).slice(0,3);
- const question=plan.core||plan.search;
- const next=plan.intent==="latest"?"Use Newest sorting to prioritize recent publication dates.":plan.intent==="review"?"Start with papers whose title or abstract indicates a review or survey, then inspect the cited references.":plan.intent==="definition"?"Open a review or overview paper first, then follow its related research.":plan.intent==="howto"?"Look for methods, protocols and review papers, then verify the procedure in the original source.":plan.intent==="comparison"?"Compare multiple papers and look for systematic reviews or comparative studies; ranking one result as universally best would require evidence beyond search relevance.":plan.intent==="access"?"Prioritize records marked Open Access, then verify the full-text license or publisher availability before relying on a copy.":plan.intent==="mechanism"||plan.intent==="causes"?"Compare several abstracts before drawing a conclusion; mechanisms often differ by system and study design.":"Open the most relevant records, compare abstracts, then follow authors, venues and related research.";
- const evidenceHtml=evidence.length?'<div class="evidence-grid">'+evidence.map(x=>'<article><div class="evidence-label">EVIDENCE FROM RECORD</div><h3 class="evidence-title">'+esc(x.title)+'</h3><p>'+esc(evidenceExcerpt(x.abstract,plan.terms))+(x.abstract.length>420?"…":"")+'</p><a href="'+esc(x.oaId?"article.html?id="+encodeURIComponent(x.oaId):x.url||"#")+'">Read the record →</a></article>').join("")+'</div>':'<div class="note">These records do not expose abstracts in the returned metadata. Open the source record or broaden the search for more context.</div>';
- const entityHtml=entities.length?'<div class="answer-entities"><div class="evidence-label">'+esc(plan.intent==="author"?"PEOPLE":"PUBLICATION VENUES")+'</div>'+entities.slice(0,3).map(e=>'<a class="entity-card" href="'+esc(e.href)+'"><strong>'+esc(e.name)+'</strong><span>'+esc(plan.intent==="author"?(e.works||0)+" works · "+(e.citations||0)+" citations":(e.works||0)+" works indexed")+'</span></a>').join("")+'</div>':"";
- answerEl.innerHTML='<div class="answer-head"><div><span class="section-label">SEARCH INTERPRETATION</span><h2>'+esc(intentLabel(plan.intent))+'</h2></div><span class="answer-query">'+esc(plan.search)+'</span></div><p class="answer-summary">I interpreted your search as <strong>'+esc(question)+'</strong>. The records below provide traceable evidence rather than an automatically generated factual claim.</p>'+evidenceHtml+'<p class="answer-next"><strong>Next step:</strong> '+esc(next)+(failed?' One scholarly index was unavailable for this search.':'')+'</p>'+entityHtml;
- const qs=relatedQueries(plan);
- if(suggestionsEl)suggestionsEl.innerHTML=qs.map(q=>'<a href="?q='+encodeURIComponent(q)+'">'+esc(q)+'</a>').join("");
+function intentLabel(intent){
+  return({identifier:"Identifier lookup",author:"Author-focused search",venue:"Publication venue search",latest:"Recent research",review:"Review / literature survey",definition:"Concept / definition",howto:"How-to / methods",mechanism:"How it works / mechanism",causes:"Causes / explanation",comparison:"Comparison / evidence",access:"Full-text / access-focused search",literature:"Literature discovery"})[intent]||"Literature discovery";
 }
-function answerScore(x,plan){
- const text=(x.title+" "+x.abstract+" "+x.authors+" "+x.venue).toLowerCase(),title=x.title.toLowerCase();
- let s=0;
- plan.terms.forEach(t=>{if(title.includes(t))s+=6;else if(text.includes(t))s+=2});
- if(plan.intent==="review"&&/review|survey|meta-analysis/i.test(text))s+=5;
- if(plan.intent==="definition"&&/overview|fundament|review|introduction/i.test(text))s+=2;
- if(plan.intent==="mechanism"&&/mechanism|pathway|process/i.test(text))s+=4;
- if(plan.intent==="causes"&&/cause|driver|mechanism/i.test(text))s+=3;
- if(plan.intent==="access"&&x.openAccess)s+=7;
- if(plan.intent==="author"&&title.includes(plan.terms.join(" ")))s+=4;
- if(x.abstract)s+=2;
- s+=Math.log10((x.cited||0)+1)*.7;
- if(x.year){const age=Math.max(0,new Date().getFullYear()-Number(x.year));s+=Math.max(0,3-age*.08)}
- return s;
+
+async function request(url){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+  try{
+    const response=await fetch(url,{signal:controller.signal});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    return await response.json();
+  }finally{clearTimeout(timer)}
 }
-function safeHref(value){const v=String(value||"").trim();if(/^https?:\/\//i.test(v)||/^(?:article|author|journal|search|saved|history)\.html(?:[?#].*)?$/i.test(v))return v;return"#"}\nfunction card(x){const saved=getSaved().some(y=>y.id===x.id),href=safeHref(x.oaId?"article.html?id="+encodeURIComponent(x.oaId):x.pageUrl||x.url||"#"),badges=(x.retracted?'<span class="result-badge result-warning">Retracted</span>':"")+(x.openAccess?'<span class="result-badge result-oa">Open access</span>':"")+(x.abstract?'<span class="result-badge">Abstract</span>':"")+(x.year&&Number(x.year)>=new Date().getFullYear()-1?'<span class="result-badge">Recent</span>':"");return '<article class="result" data-record-id="'+esc(x.id)+'"><button class="save" data-save="'+esc(x.id)+'">'+(saved?"Saved":"Save")+'</button><h2><a class="result-link" href="'+esc(href)+'">'+esc(x.title)+'</a></h2><div class="meta">'+esc(x.authors||"Unknown authors")+" · "+esc(x.venue||"Unknown venue")+" · "+esc(x.year||"n.d.")+(x.cited!=null?" · "+esc(x.cited)+" citations":"")+'</div>'+('<div class="result-badges">'+badges+'</div>')+(x.abstract?'<p class="abstract">'+esc(x.abstract.slice(0,650))+(x.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+(x.fullTextUrl?'<a href="'+safeHref(x.fullTextUrl)+'" target="_blank" rel="noopener">Full text ↗</a>':"")+(x.doi?'<a href="https://doi.org/'+encodeURIComponent(x.doi)+'" target="_blank" rel="noopener">DOI ↗</a>':"")+(x.sourceUrl?'<a href="'+safeHref(x.sourceUrl)+'" target="_blank" rel="noopener">Source record ↗</a>':"")+'" target="_blank" rel="noopener">Source record ↗</a></div></article>'}
-function linkForSaved(node){return node?.querySelector(".result-link")?.href||"#"}
-function historyRecord(x,href){historyAdd({id:x.id,title:x.title,url:href,authors:x.authors,venue:x.venue,year:x.year})}
-async function request(url){const c=new AbortController(),t=setTimeout(()=>c.abort(),10000);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error("Request failed");return await r.json()}finally{clearTimeout(t)}}
-function crossrefItem(w){
- const key=w.DOI||w.URL||w.title?.[0]||"untitled";
- const external=w.URL||(w.DOI?"https://doi.org/"+w.DOI:"");const fullTextUrl=w.link?.find(l=>l?.URL)?.URL||"";return {id:"cr:"+key,title:w.title?.[0]||"Untitled",authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),venue:w["container-title"]?.[0]||"",year:((w.published?.["date-parts"]?.[0]||[])[0]||"").toString(),cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),url:external,sourceUrl:external,fullTextUrl,pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""};
+
+function mapOpenAlex(w){
+  return{
+    id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title||"Untitled",
+    authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),
+    venue:w.primary_location?.source?.display_name||"",year:String(w.publication_year||""),
+    cited:w.cited_by_count||0,doi:String(w.doi||"").replace(/^https?:\/\/doi\.org\//i,""),
+    abstract:reconstructInverted(w.abstract_inverted_index),
+    url:w.primary_location?.landing_page_url||w.doi||w.id,sourceUrl:w.id,
+    fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",
+    openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,
+    topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)
+  };
+}
+function mapCrossref(w){
+  const key=w.DOI||w.URL||w.title?.[0]||"untitled";
+  const external=w.URL||(w.DOI?"https://doi.org/"+w.DOI:"");
+  const fullTextUrl=w.link?.find(l=>l?.URL)?.URL||"";
+  return{
+    id:"cr:"+key,title:w.title?.[0]||"Untitled",
+    authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),
+    venue:w["container-title"]?.[0]||"",
+    year:String(((w.published?.["date-parts"]?.[0]||[])[0]||"")),
+    cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),
+    url:external,sourceUrl:external,fullTextUrl,
+    pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""
+  };
+}
+async function searchOpenAlex(q,from,to,sort){
+  const p=new URLSearchParams({search:q,per_page:"30"});
+  if(from||to)p.set("filter","from_publication_date:"+(from||"1900")+"-01-01,to_publication_date:"+(to||"2100")+"-12-31");
+  if(sort==="newest")p.set("sort","publication_date:desc");
+  if(sort==="cited")p.set("sort","cited_by_count:desc");
+  const data=await request("https://api.openalex.org/works?"+p);
+  return(data.results||[]).map(mapOpenAlex);
+}
+async function searchCrossref(q,from,to){
+  const p=new URLSearchParams({query:q,rows:"30"});
+  if(from||to)p.set("filter","from-pub-date:"+(from||"1900")+"-01-01,until-pub-date:"+(to||"2100-12-31"));
+  const data=await request("https://api.crossref.org/v1/works?"+p);
+  return(data.message?.items||[]).map(mapCrossref);
 }
 async function exactDoi(doi){
- try{
-  const j=await request("https://api.crossref.org/v1/works/"+encodeURIComponent(doi));
-  if(j.message)return[crossrefItem(j.message)];
- }catch{}
- try{
-  const j=await request("https://api.openalex.org/works?"+new URLSearchParams({search:doi,per_page:"5"}));
-  const matches=(j.results||[]).filter(w=>String(w.doi||"").toLowerCase().replace(/^https:\/\/doi\.org\//,"")===doi.toLowerCase());
-  return matches.slice(0,1).map(w=>({id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title,authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),venue:w.primary_location?.source?.display_name||"",year:(w.publication_year||"").toString(),cited:w.cited_by_count||0,doi:(w.doi||"").replace(/^https:\/\/doi\.org\//,""),abstract:reconstruct(w.abstract_inverted_index),url:w.primary_location?.landing_page_url||w.id,sourceUrl:w.id,fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)}));
- }catch{}
- return[];
+  try{
+    const data=await request("https://api.crossref.org/v1/works/"+encodeURIComponent(doi));
+    if(data.message)return[mapCrossref(data.message)];
+  }catch{}
+  try{
+    const data=await request("https://api.openalex.org/works?"+new URLSearchParams({search:doi,per_page:"5"}));
+    return(data.results||[]).filter(w=>String(w.doi||"").toLowerCase().replace(/^https?:\/\/doi\.org\//i,"")===doi.toLowerCase()).slice(0,1).map(mapOpenAlex);
+  }catch{return[]}
 }
-async function openalex(q,from,to,sort){const p=new URLSearchParams({search:q,per_page:"30"});if(from||to)p.set("filter","from_publication_date:"+(from||"1900")+"-01-01,to_publication_date:"+(to||"2100")+"-12-31");if(sort==="newest")p.set("sort","publication_date:desc");if(sort==="cited")p.set("sort","cited_by_count:desc");const j=await request("https://api.openalex.org/works?"+p);return(j.results||[]).map(w=>({id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title,authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),venue:w.primary_location?.source?.display_name||"",year:(w.publication_year||"").toString(),cited:w.cited_by_count||0,doi:(w.doi||"").replace("https://doi.org/",""),abstract:reconstruct(w.abstract_inverted_index),url:w.primary_location?.landing_page_url||w.doi||w.id,sourceUrl:w.id,fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)}))}
-async function openalexAuthors(q){const j=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:q,per_page:"5"}));return(j.results||[]).map(a=>({id:(a.id||"").split("/").pop(),name:a.display_name||"Unknown author",works:a.works_count||0,citations:a.cited_by_count||0,href:"author.html?id="+encodeURIComponent((a.id||"").split("/").pop())+"&name="+encodeURIComponent(a.display_name||"")}))}
-async function openalexSources(q){const j=await request("https://api.openalex.org/sources?"+new URLSearchParams({search:q,per_page:"5"}));return(j.results||[]).map(s=>({id:(s.id||"").split("/").pop(),name:s.display_name||"Unknown venue",works:s.works_count||0,href:"journal.html?name="+encodeURIComponent(s.display_name||"")}))}
-async function crossref(q,from,to){const p=new URLSearchParams({query:q,rows:"30"});if(from||to)p.set("filter","from-pub-date:"+(from||"1900")+"-01-01,until-pub-date:"+(to||"2100-12-31"));const j=await request("https://api.crossref.org/v1/works?"+p);return(j.message?.items||[]).map(crossrefItem)}
-function dedupe(a){const seen=new Map();return a.filter(x=>{const k=(x.doi||x.title).toLowerCase().replace(/[^a-z0-9]+/g," ").trim();if(seen.has(k)){const old=seen.get(k);if((x.abstract||"").length>(old.abstract||"").length){Object.assign(old,x)}return false}seen.set(k,x);return true})}
-function renderSuggestions(plan){if(!suggestionsEl)return;const qs=relatedQueries(plan);suggestionsEl.innerHTML=qs.map(q=>'<a href="?q='+encodeURIComponent(q)+'">'+esc(q)+'</a>').join("")}
+async function searchEntities(plan){
+  try{
+    if(plan.intent==="author"){
+      const data=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:plan.core,per_page:"5"}));
+      return{type:"author",items:(data.results||[]).map(a=>({name:a.display_name||"Unknown author",works:a.works_count||0,citations:a.cited_by_count||0,href:"author.html?id="+encodeURIComponent((a.id||"").split("/").pop())+"&name="+encodeURIComponent(a.display_name||"")}))};
+    }
+    if(plan.intent==="venue"){
+      const data=await request("https://api.openalex.org/sources?"+new URLSearchParams({search:plan.core,per_page:"5"}));
+      return{type:"venue",items:(data.results||[]).map(s=>({name:s.display_name||"Unknown venue",works:s.works_count||0,href:"journal.html?name="+encodeURIComponent(s.display_name||"")}))};
+    }
+  }catch{}
+  return{type:"",items:[]};
+}
+
+function dedupe(records){
+  const seen=new Map(),out=[];
+  for(const item of records){
+    const key=String(item.doi||item.title||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+    if(!key)continue;
+    if(seen.has(key)){
+      const old=seen.get(key);
+      if((item.abstract||"").length>(old.abstract||"").length)Object.assign(old,item);
+      continue;
+    }
+    seen.set(key,item);out.push(item);
+  }
+  return out;
+}
+function relevanceScore(item,plan){
+  const title=item.title.toLowerCase(),text=(item.title+" "+item.abstract+" "+item.authors+" "+item.venue).toLowerCase();
+  let score=0;
+  const terms=plan.terms;
+  if(title===plan.core.toLowerCase())score+=24;
+  for(const term of terms){
+    if(title.includes(term))score+=7;
+    else if(text.includes(term))score+=2;
+  }
+  if(terms.length&&terms.every(t=>title.includes(t)))score+=8;
+  if(plan.intent==="review"&&/review|survey|meta-analysis/.test(text))score+=7;
+  if(plan.intent==="definition"&&/overview|fundament|introduction/.test(text))score+=4;
+  if(plan.intent==="howto"&&/method|protocol|procedure|workflow/.test(text))score+=5;
+  if(plan.intent==="mechanism"&&/mechanism|pathway|process/.test(text))score+=5;
+  if(plan.intent==="causes"&&/cause|driver|mechanism|factor/.test(text))score+=4;
+  if(plan.intent==="comparison"&&/compar|versus|vs\.|trade-off|benchmark/.test(text))score+=5;
+  if(plan.intent==="access"&&item.openAccess)score+=8;
+  if(item.abstract)score+=2;
+  if(item.fullTextUrl)score+=2;
+  if(item.retracted)score-=30;
+  score+=Math.min(6,Math.log10((item.cited||0)+1));
+  if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
+  return score;
+}
+function evidenceExcerpt(value,terms){
+  const text=clean(value);if(!text)return"";
+  const sentences=text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  let best=sentences[0]||text,bestScore=-1;
+  for(const sentence of sentences){
+    const low=sentence.toLowerCase();
+    const score=terms.reduce((n,t)=>n+(low.includes(t)?1:0),0);
+    if(score>bestScore){bestScore=score;best=sentence}
+  }
+  return best.slice(0,420);
+}
+function buildAnswer(plan,data,failed,entityResult){
+  if(!answerEl)return;
+  const evidence=data.filter(x=>x.abstract).slice(0,3);
+  const oa=data.filter(x=>x.openAccess).length,doi=data.filter(x=>x.doi).length,abstracts=data.filter(x=>x.abstract).length;
+  const next=({
+    latest:"Use Newest sorting to emphasize publication date.",
+    review:"Start with review or survey records, then follow their references and related work.",
+    definition:"Use an overview or review as the starting point, then inspect the primary studies.",
+    howto:"Look for methods and protocols, then verify the procedure in the original source.",
+    comparison:"Compare multiple papers or systematic reviews; search relevance alone cannot establish a universal best choice.",
+    access:"Use records marked Open Access and verify the license or full-text source before relying on it.",
+    mechanism:"Compare several abstracts because mechanisms can depend on the system and study design.",
+    causes:"Compare several studies and reviews before treating a proposed cause as established.",
+    author:"The author cards below are entity matches; use the works to inspect the person's research directly.",
+    venue:"The venue cards below are entity matches; use them to browse the publication's recent work.",
+    identifier:"This is an exact identifier lookup; verify the DOI record before formal citation.",
+    literature:"Open the closest matches, compare abstracts, then follow authors, venues and related work."
+  })[plan.intent]||"Open the closest matches, compare abstracts, then follow authors, venues and related work.";
+  const entityHtml=entityResult?.items?.length?'<div class="answer-entities"><div class="evidence-label">'+esc(entityResult.type==="author"?"PEOPLE":"PUBLICATION VENUES")+'</div>'+entityResult.items.slice(0,3).map(e=>'<a class="entity-card" href="'+safeHref(e.href)+'"><strong>'+esc(e.name)+'</strong><span>'+esc(entityResult.type==="author"?(e.works||0)+" works · "+(e.citations||0)+" citations":(e.works||0)+" works indexed")+'</span></a>').join("")+'</div>':"";
+  const evidenceHtml=evidence.length?'<div class="evidence-grid">'+evidence.map(x=>'<article><div class="evidence-label">EVIDENCE FROM RECORD</div><h3 class="evidence-title">'+esc(x.title)+'</h3><p>'+esc(evidenceExcerpt(x.abstract,plan.terms))+(x.abstract.length>420?"…":"")+'</p><a href="'+safeHref(x.oaId?"article.html?id="+encodeURIComponent(x.oaId):x.pageUrl||x.url||"#")+'">Read the record →</a></article>').join("")+'</div>':'<div class="note">No abstracts were returned for the leading matches. Open the records or broaden the search for more context.</div>';
+  answerEl.innerHTML='<div class="answer-head"><div><span class="section-label">SEARCH INTERPRETATION</span><h2>'+esc(intentLabel(plan.intent))+'</h2></div><span class="answer-query">'+esc(plan.search)+'</span></div><p class="answer-summary">I interpreted your query as <strong>'+esc(plan.core)+'</strong>. The answer area uses traceable metadata and excerpts from returned scholarly records rather than inventing a conclusion.</p><div class="answer-stats"><span>'+data.length+' records</span><span>'+abstracts+' abstracts</span><span>'+doi+' DOI</span><span>'+oa+' OA signals</span></div>'+evidenceHtml+'<p class="answer-next"><strong>Next step:</strong> '+esc(next)+(failed?' One scholarly index was unavailable.':"")+'</p>'+entityHtml;
+  const queries=relatedQueries(plan);
+  if(suggestionsEl)suggestionsEl.innerHTML=queries.map(q=>'<a href="?q='+encodeURIComponent(q)+'">'+esc(q)+'</a>').join("");
+}
+function resultCard(item){
+  const saved=getSaved().some(x=>x.id===item.id);
+  const href=safeHref(item.oaId?"article.html?id="+encodeURIComponent(item.oaId):item.pageUrl||item.url||"#");
+  const badges=(item.retracted?'<span class="result-badge result-warning">Retracted</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':"")+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
+  const links=(item.fullTextUrl?'<a href="'+safeHref(item.fullTextUrl)+'" target="_blank" rel="noopener">Full text ↗</a>':"")+(item.doi?'<a href="https://doi.org/'+encodeURIComponent(item.doi)+'" target="_blank" rel="noopener">DOI ↗</a>':"")+(item.sourceUrl?'<a href="'+safeHref(item.sourceUrl)+'" target="_blank" rel="noopener">Source record ↗</a>':"");
+  return'<article class="result" data-record-id="'+esc(item.id)+'"><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
+}
 function syncUrl(){
- const p=new URLSearchParams(location.search);
- p.set("q",$("#query").value);
- p.set("from",$("#fromYear").value);
- p.set("to",$("#toYear").value);
- p.set("source",$("#source").value);
- p.set("sort",$("#sort").value);
- if($("#openAccessOnly")?.checked)p.set("oa","1");else p.delete("oa");
- if($("#abstractOnly")?.checked)p.set("abstract","1");else p.delete("abstract");
- history.replaceState(null,"","?"+p);
-}
-function applyResultFilter(){
- const input=$("#filterResults"),term=(input?.value||"").trim().toLowerCase();
- const cards=[...results.querySelectorAll(".result")];
- let visible=0;
- cards.forEach(card=>{const show=!term||card.textContent.toLowerCase().includes(term);card.hidden=!show;if(show)visible++});
- if(input&&term){const total=cards.length;input.setAttribute("aria-label","Filter results");statusEl.textContent=visible+" of "+total+" results shown";}else if(!term&&baseStatus){statusEl.textContent=baseStatus}
+  const p=new URLSearchParams(location.search);
+  p.set("q",queryInput.value.trim());p.set("from",$("#fromYear").value);p.set("to",$("#toYear").value);p.set("source",$("#source").value);p.set("sort",$("#sort").value);
+  const mode=$("#mode")?.value||"auto";if(mode==="auto")p.delete("mode");else p.set("mode",mode);
+  if($("#openAccessOnly")?.checked)p.set("oa","1");else p.delete("oa");
+  if($("#abstractOnly")?.checked)p.set("abstract","1");else p.delete("abstract");
+  if($("#doiOnly")?.checked)p.set("doi","1");else p.delete("doi");
+  history.replaceState(null,"","?"+p);
 }
 let dataCache=[],searchRun=0,baseStatus="";
-async function run(rawQ){
- const runId=++searchRun,q=rawQ.trim();if(!q){statusEl.textContent="Enter a topic, title, author or DOI.";results.innerHTML="";if(answerEl)answerEl.innerHTML="";if(suggestionsEl)suggestionsEl.innerHTML="";return}
- const plan=planQuery(q);statusEl.textContent="Understanding your question…";results.innerHTML='<div class="loading">Searching scholarly metadata…</div>';if(answerEl)answerEl.innerHTML='<div class="answer-loading">Building a research path from your query…</div>';renderSuggestions(plan);
- const from=$("#fromYear").value,to=$("#toYear").value,source=$("#source").value,sort=$("#sort").value;
- if(from&&to&&Number(from)>Number(to)){statusEl.textContent="The year range is invalid.";results.innerHTML='<div class="note">The From year must be earlier than or equal to the To year.</div>';if(answerEl)answerEl.innerHTML="";return}
- const effectiveSort=plan.intent==="latest"&&sort==="relevance"?"newest":sort;
- const openAccessOnly=$("#openAccessOnly")?.checked;
- const abstractOnly=$("#abstractOnly")?.checked;
- const doiOnly=$("#doiOnly")?.checked;
- try{
-  let settled=[];
-  let entityPromise=Promise.resolve([]);
-  if(plan.intent==="identifier"){
-    const doiResults=await exactDoi(normalizeDoi(plan.core));
-    settled=[{status:"fulfilled",value:doiResults}];
-  }else{
-    const jobs=[];if(source==="all"||source==="openalex")jobs.push(openalex(plan.search,from,to,effectiveSort));if(source==="all"||source==="crossref")jobs.push(crossref(plan.search,from,to));
-    entityPromise=plan.intent==="author"?openalexAuthors(plan.core):plan.intent==="venue"?openalexSources(plan.core):Promise.resolve([]);
-    settled=await Promise.allSettled(jobs);
-    let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
-    if(initial.length<5&&plan.search!==plan.core){
-      const fallbackJobs=[];if(source==="all"||source==="openalex")fallbackJobs.push(openalex(plan.core,from,to,effectiveSort));if(source==="all"||source==="crossref")fallbackJobs.push(crossref(plan.core,from,to));
-      const fallback=await Promise.allSettled(fallbackJobs);
-      if(runId!==searchRun)return;
-      settled=settled.concat(fallback);
-    }
-  }
-  if(runId!==searchRun)return;
-  let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
-  if(openAccessOnly)data=data.filter(x=>x.openAccess);
-  if(abstractOnly)data=data.filter(x=>!!x.abstract);
-  dataCache=data;
-  if(effectiveSort==="relevance")data.sort((a,b)=>answerScore(b,plan)-answerScore(a,plan));else if(effectiveSort==="newest")data.sort((a,b)=>(b.year||"").localeCompare(a.year||""));else data.sort((a,b)=>(b.cited||0)-(a.cited||0));
-  const failed=settled.some(x=>x.status==="rejected");const oaCount=data.filter(x=>x.openAccess).length,abstractCount=data.filter(x=>x.abstract).length,retractedCount=data.filter(x=>x.retracted).length,doiCount=data.filter(x=>x.doi).length;baseStatus=data.length+" records found"+(failed?" · one index was unavailable":"")+(data.length?(" · "+abstractCount+" abstracts · "+oaCount+" OA signals"+(retractedCount?" · "+retractedCount+" retracted":"")):"");results.innerHTML=data.map(card).join("")||'<div class="note"><strong>No close match found.</strong><br>Try one of the related searches above, remove a specific phrase, or broaden the date range.</div>';buildAnswerLayer(plan,data,failed,[]);applyResultFilter();entityPromise.then(value=>{if(runId===searchRun&&Array.isArray(value))buildAnswerLayer(plan,data,failed,value)}).catch(()=>{});
- }catch(e){if(runId!==searchRun)return;statusEl.textContent="Search could not be completed";results.innerHTML='<div class="note">The scholarly indexes did not respond. Try again in a moment.</div>';if(answerEl)answerEl.innerHTML='<div class="note">No evidence could be loaded for this search. Please retry or use a related search.</div>'}
+function applyResultFilter(){
+  const term=(resultFilter?.value||"").trim().toLowerCase();
+  const cards=[...results.querySelectorAll(".result")];
+  let shown=0;
+  cards.forEach(card=>{const visible=!term||card.textContent.toLowerCase().includes(term);card.hidden=!visible;if(visible)shown++});
+  if(term)statusEl.textContent=shown+" of "+cards.length+" results shown";else if(baseStatus)statusEl.textContent=baseStatus;
 }
-form.addEventListener("submit",e=>{e.preventDefault();syncUrl();run($("#query").value)});
-results.addEventListener("click",e=>{const link=e.target.closest(".result-link");if(link){const node=link.closest(".result"),id=node?.dataset.recordId,x=dataCache.find(z=>z.id===id);if(x)historyRecord(x,link.href);return}const id=e.target.dataset.save;if(!id)return;const node=[...results.querySelectorAll(".result")].find(n=>n.querySelector("[data-save='"+CSS.escape(id)+"']"));if(!node)return;const already=getSaved().some(x=>x.id===id);if(already){removeSaved(id);e.target.textContent="Save";return}const x=dataCache.find(z=>z.id===id);save(Object.assign({},x||{id,title:node.querySelector("h2")?.textContent||id,url:node.querySelector("h2 a")?.href||"#"},{pageUrl:linkForSaved(node)}));e.target.textContent="Saved"});
-$("#savedBtn")?.addEventListener("click",()=>{location.href="saved.html"});
-const p=new URLSearchParams(location.search),initial=p.get("q");$("#fromYear").value=p.get("from")||"";$("#toYear").value=p.get("to")||"";$("#source").value=p.get("source")||"all";$("#sort").value=p.get("sort")||"relevance";if($("#openAccessOnly"))$("#openAccessOnly").checked=p.get("oa")==="1";if($("#abstractOnly"))$("#abstractOnly").checked=p.get("abstract")==="1";if($("#doiOnly"))$("#doiOnly").checked=p.get("doi")==="1";if(initial){$("#query").value=initial;$("#topQ")&&($("#topQ").value=initial);run(initial)}
+async function run(raw){
+  const runId=++searchRun,q=String(raw||"").trim();
+  if(!q){baseStatus="";statusEl.textContent="Enter a topic, title, author or DOI.";results.innerHTML="";if(answerEl)answerEl.innerHTML="";if(suggestionsEl)suggestionsEl.innerHTML="";return}
+  const plan=planQuery(q);
+  statusEl.textContent="Understanding your question…";
+  results.setAttribute("aria-busy","true");
+  results.innerHTML='<div class="loading">Searching scholarly metadata…</div>';
+  if(answerEl)answerEl.innerHTML='<div class="answer-loading">Finding evidence and research paths…</div>';
+  const from=$("#fromYear").value,to=$("#toYear").value,source=$("#source").value,sort=$("#sort").value;
+  if(from&&to&&Number(from)>Number(to)){baseStatus="";statusEl.textContent="The year range is invalid.";results.innerHTML='<div class="note">The From year must be earlier than or equal to the To year.</div>';results.removeAttribute("aria-busy");if(answerEl)answerEl.innerHTML="";return}
+  const oaOnly=$("#openAccessOnly")?.checked,abstractOnly=$("#abstractOnly")?.checked,doiOnly=$("#doiOnly")?.checked;
+  const entityPromise=searchEntities(plan);
+  try{
+    let settled=[];
+    if(plan.intent==="identifier"){
+      const exact=await exactDoi(plan.core);
+      settled=[{status:"fulfilled",value:exact}];
+    }else{
+      const jobs=[];
+      if(source==="all"||source==="openalex")jobs.push(searchOpenAlex(plan.search,from,to,sort));
+      if(source==="all"||source==="crossref")jobs.push(searchCrossref(plan.search,from,to));
+      settled=await Promise.allSettled(jobs);
+      let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+      if(initial.length<5&&plan.search!==plan.core){
+        const fallbackJobs=[];
+        if(source==="all"||source==="openalex")fallbackJobs.push(searchOpenAlex(plan.core,from,to,sort));
+        if(source==="all"||source==="crossref")fallbackJobs.push(searchCrossref(plan.core,from,to));
+        const fallback=await Promise.allSettled(fallbackJobs);
+        if(runId!==searchRun)return;
+        settled=settled.concat(fallback);
+      }
+    }
+    if(runId!==searchRun)return;
+    let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+    if(oaOnly)data=data.filter(x=>!!x.openAccess);
+    if(abstractOnly)data=data.filter(x=>!!x.abstract);
+    if(doiOnly)data=data.filter(x=>!!x.doi);
+    if(sort==="relevance"||plan.intent!=="identifier")data.sort((a,b)=>relevanceScore(b,plan)-relevanceScore(a,plan));
+    if(sort==="newest")data.sort((a,b)=>(b.year||"").localeCompare(a.year||""));
+    if(sort==="cited")data.sort((a,b)=>(b.cited||0)-(a.cited||0));
+    dataCache=data;
+    const failed=settled.some(x=>x.status==="rejected"),oaCount=data.filter(x=>x.openAccess).length,abstractCount=data.filter(x=>x.abstract).length,doiCount=data.filter(x=>x.doi).length;
+    baseStatus=data.length+" records found"+(failed?" · one index was unavailable":"")+(data.length?(" · "+abstractCount+" abstracts · "+doiCount+" DOI"+(oaCount?" · "+oaCount+" OA signals":"")):"");
+    statusEl.textContent=baseStatus;
+    results.innerHTML=data.map(resultCard).join("")||'<div class="note"><strong>No close match found.</strong><br>Try a related search, remove a phrase, or broaden the date range.</div>';
+    results.removeAttribute("aria-busy");
+    applyResultFilter();
+    buildAnswer(plan,data,failed,{type:"",items:[]});
+    entityPromise.then(entityResult=>{if(runId===searchRun&&entityResult?.items?.length)buildAnswer(plan,data,failed,entityResult)}).catch(()=>{});
+  }catch(error){
+    if(runId!==searchRun)return;
+    results.removeAttribute("aria-busy");
+    if(plan.intent==="identifier"){baseStatus="";statusEl.textContent="DOI record not found";results.innerHTML='<div class="note">No scholarly record was found for this DOI. Check the identifier and try again.</div>';if(answerEl)answerEl.innerHTML="";return}
+    baseStatus="";statusEl.textContent="Search could not be completed";results.innerHTML='<div class="note">The scholarly indexes did not respond. Try again in a moment.</div>';if(answerEl)answerEl.innerHTML='<div class="note">No evidence could be loaded for this search. Please retry or use a related search.</div>';
+  }
+}
 
-["source","sort","openAccessOnly","abstractOnly","doiOnly"].forEach(id=>{$("#"+id)?.addEventListener("change",()=>{if($("#query").value.trim()){syncUrl();run($("#query").value)}})});$("#filterResults")?.addEventListener("input",applyResultFilter);
+form?.addEventListener("submit",e=>{e.preventDefault();syncUrl();run(queryInput.value)});
+results?.addEventListener("click",e=>{
+  const link=e.target.closest(".result-link");
+  if(link){
+    const node=link.closest(".result"),item=dataCache.find(x=>x.id===node?.dataset.recordId);
+    if(item)addHistory({id:item.id,title:item.title,url:link.href,authors:item.authors,venue:item.venue,year:item.year});
+    return;
+  }
+  const saveButton=e.target.closest("[data-save]");
+  if(!saveButton)return;
+  const id=saveButton.dataset.save,item=dataCache.find(x=>x.id===id);
+  if(!item)return;
+  if(getSaved().some(x=>x.id===id)){removeSaved(id);saveButton.textContent="Save"}else{saveRecord({...item,pageUrl:saveButton.closest(".result")?.querySelector(".result-link")?.href||"#"});saveButton.textContent="Saved"}
+});
+$("#savedBtn")?.addEventListener("click",()=>location.href="saved.html");
+resultFilter?.addEventListener("input",applyResultFilter);
+$("#source")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
+$("#sort")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
+["openAccessOnly","abstractOnly","doiOnly","mode"].forEach(id=>$("#"+id)?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}}));
+document.addEventListener("keydown",e=>{if(e.key==="/"&&!["INPUT","TEXTAREA","SELECT"].includes(document.activeElement?.tagName)){e.preventDefault();queryInput?.focus()}});
+const params=new URLSearchParams(location.search),initial=params.get("q")||"";
+$("#fromYear").value=params.get("from")||"";
+$("#toYear").value=params.get("to")||"";
+$("#source").value=params.get("source")||"all";
+$("#sort").value=params.get("sort")||"relevance";
+if($("#mode"))$("#mode").value=params.get("mode")||"auto";
+if($("#openAccessOnly"))$("#openAccessOnly").checked=params.get("oa")==="1";
+if($("#abstractOnly"))$("#abstractOnly").checked=params.get("abstract")==="1";
+if($("#doiOnly"))$("#doiOnly").checked=params.get("doi")==="1";
+if(initial){queryInput.value=initial;$("#topQ")&&($("#topQ").value=initial);run(initial)}
