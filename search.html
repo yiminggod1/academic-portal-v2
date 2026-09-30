@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Search Literature — Academic Library</title>
+<meta name="description" content="Search chemistry and scientific literature using OpenAlex and Crossref metadata.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site-header"><a class="brand" href="index.html"><span>R/W/C</span><b>Academic Library</b></a><nav><a class="active" href="search.html">Search literature</a><a href="about.html">About</a></nav></header>
+<main class="search-page"><div class="eyebrow">LITERATURE SEARCH</div><h1>Search the research record.</h1><p class="lead">Search scholarly metadata from OpenAlex and Crossref. Results link back to persistent identifiers and source records.</p>
+<form id="searchForm" class="filters"><input id="query" placeholder="e.g. polymer electrolyte conductivity" autocomplete="off"><input id="fromYear" type="number" min="1800" max="2100" placeholder="From year"><input id="toYear" type="number" min="1800" max="2100" placeholder="To year"><select id="source"><option value="all">All sources</option><option value="openalex">OpenAlex</option><option value="crossref">Crossref</option></select><select id="sort"><option value="relevance">Relevance</option><option value="newest">Newest</option><option value="cited">Citations</option></select><button>Search</button></form>
+<div class="quick"><span>Try:</span><a href="?q=organic+photochemistry">photochemistry</a><a href="?q=drug+delivery+nanoparticles">drug delivery</a><a href="?q=electrochemistry">electrochemistry</a><a href="?q=green+chemistry">green chemistry</a></div>
+<div class="results-head"><strong id="status">Enter a research topic to begin.</strong><button id="savedBtn" class="ghost" type="button">Saved records</button></div>
+<section id="results" class="results"></section>
+</main><footer>Metadata discovery only. Always verify the source record before citing.</footer>
+<script src="app.js"></script>
+</body></html>
