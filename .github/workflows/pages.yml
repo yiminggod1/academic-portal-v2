@@ -24,6 +24,54 @@ jobs:
       - name: Validate JavaScript syntax
         run: |
           for f in *.js; do node --check "$f"; done
+      - name: Static site QA
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const root = process.cwd();
+          const htmlFiles = fs.readdirSync(root).filter(f => f.endsWith('.html'));
+          const required = ['index.html','search.html','article.html','author.html','journal.html','saved.html','history.html','recent.html','guides.html','topics.html','privacy.html','terms.html','disclaimer.html','contact.html','compare.html'];
+          for (const f of required) if (!fs.existsSync(path.join(root,f))) throw new Error('Missing required page: '+f);
+          for (const file of htmlFiles) {
+            const c = fs.readFileSync(file,'utf8');
+            const ids = [...c.matchAll(/\\sid=["']([^"']+)["']/gi)].map(m=>m[1]);
+            const dup = ids.filter((id,i)=>ids.indexOf(id)!==i);
+            if (dup.length) throw new Error(file+' has duplicate IDs: '+[...new Set(dup)].join(', '));
+            if (/href=["'][^"']*undefined|src=["'][^"']*undefined/i.test(c)) throw new Error(file+' contains an undefined local reference');
+            for (const m of c.matchAll(/(?:href|src)=["']([^"']+)["']/gi)) {
+              const ref = m[1];
+              if (!ref || /^(?:https?:|mailto:|javascript:|data:|#)/i.test(ref)) continue;
+              const target = ref.split(/[?#]/)[0];
+              if (target && !fs.existsSync(path.join(root,target))) throw new Error(file+' references missing '+target);
+            }
+          }
+          const search = fs.readFileSync('search.html','utf8');
+          if ((search.match(/id=["']answerLayer["']/g)||[]).length !== 1) throw new Error('search.html answerLayer count is not 1');
+          if ((search.match(/id=["']querySuggestions["']/g)||[]).length !== 1) throw new Error('search.html querySuggestions count is not 1');
+          if (!fs.readFileSync('app.js','utf8').includes('data-compare')) throw new Error('Comparison control is missing from app.js');
+          console.log('Static QA passed for '+htmlFiles.length+' HTML pages.');
+          NODE
+      - name: Live scholarly API smoke test
+        run: |
+          node <<'NODE'
+          const endpoints = [
+            'https://api.openalex.org/works?search=chemistry&per_page=1',
+            'https://api.openalex.org/authors?search=Marie%20Curie&per_page=1',
+            'https://api.openalex.org/sources?search=Nature&per_page=1',
+            'https://api.crossref.org/v1/works?query=chemistry&rows=1'
+          ];
+          const controller = new AbortController();
+          const timer = setTimeout(()=>controller.abort(),15000);
+          try {
+            for (const url of endpoints) {
+              const r = await fetch(url,{signal:controller.signal});
+              if (!r.ok) throw new Error(url+' -> HTTP '+r.status);
+              await r.json();
+            }
+            console.log('Live scholarly API smoke test passed.');
+          } finally { clearTimeout(timer); }
+          NODE
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
