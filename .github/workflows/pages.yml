@@ -52,7 +52,8 @@ jobs:
           const app = fs.readFileSync('app.js','utf8');
           const article = fs.readFileSync('article.js','utf8');
           const saved = fs.readFileSync('saved.js','utf8');
-          if (!app.includes('data-compare') || !app.includes('function matchSummary')) throw new Error('Search differentiation layer is missing');
+          if (!app.includes('data-compare') || !app.includes('function matchSummary') || !app.includes('function relevanceScore')) throw new Error('Search differentiation layer is missing');
+          if (!app.includes('function buildAnswer')) throw new Error('Search evidence rendering layer is missing');
           if (!article.includes('async function related(work)')) throw new Error('Article related-research function is missing');
           if (!article.includes('savePaperNote') || !article.includes('academicNotes')) throw new Error('Per-paper notes are missing');
           if (!saved.includes('Export BibTeX') && !fs.readFileSync('saved.html','utf8').includes('Export BibTeX')) throw new Error('Citation export UI is missing');
