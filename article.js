@@ -32,7 +32,7 @@ async function loadWork(){
   }
   if(doiParam){
     const doi=doiParam.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").trim();
-    const data=await request("https://api.crossref.org/works/"+encodeURIComponent(doi));
+    const data=await request("https://api.crossref.org/v1/works/"+encodeURIComponent(doi));
     const authors=(data.message?.author||[]).map(a=>({author:{display_name:[a.given,a.family].filter(Boolean).join(" ")}}));
     const work={id:"https://doi.org/"+doi,display_name:data.message?.title?.[0]||"Untitled",title:data.message?.title?.[0]||"Untitled",authorships:authors,abstract:data.message?.abstract||"",publication_date:data.message?.published?.["date-parts"]?.[0]?.join("-")||"",publication_year:data.message?.published?.["date-parts"]?.[0]?.[0]||"",cited_by_count:data.message?.["is-referenced-by-count"]||0,type:data.message?.type||"journal-article",doi:"https://doi.org/"+doi,primary_location:{source:{display_name:data.message?.["container-title"]?.[0]||"Unknown venue"}},related_works:[]};
     return {source:"Crossref",recordId:"cr:"+doi,work};
