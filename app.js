@@ -120,19 +120,37 @@ function intentLabel(intent){
   return({identifier:"Identifier lookup",author:"Author-focused search",venue:"Publication venue search",latest:"Recent research",review:"Review / literature survey",definition:"Concept / definition",howto:"How-to / methods",mechanism:"How it works / mechanism",causes:"Causes / explanation",comparison:"Comparison / evidence",access:"Full-text / access-focused search",literature:"Literature discovery"})[intent]||"Literature discovery";
 }
 
+const API_CACHE_TTL=120000;
+function readApiCache(url){
+  try{
+    const raw=sessionStorage.getItem("academicApiCache:"+url);
+    if(!raw)return null;
+    const item=JSON.parse(raw);
+    if(!item||Date.now()-item.time>API_CACHE_TTL){sessionStorage.removeItem("academicApiCache:"+url);return null}
+    return item.data;
+  }catch{return null}
+}
+function writeApiCache(url,data){
+  try{sessionStorage.setItem("academicApiCache:"+url,JSON.stringify({time:Date.now(),data}));}catch{}
+}
 async function request(url){
+  const cached=readApiCache(url);
+  if(cached)return cached;
   let lastError;
   for(let attempt=0;attempt<3;attempt++){
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
     try{
       const response=await fetch(url,{signal:controller.signal});
-      if(response.ok)return await response.json();
+      if(response.ok){
+        const data=await response.json();
+        writeApiCache(url,data);
+        return data;
+      }
       lastError=new Error("HTTP "+response.status);
       if(![429,500,502,503,504].includes(response.status))throw lastError;
     }catch(error){
       lastError=error;
-      if(error?.name==="AbortError"&&attempt===2)throw error;
-      if(error?.name!=="AbortError"&&attempt===2)throw error;
+      if(attempt===2)throw error;
     }finally{clearTimeout(timer)}
     await new Promise(resolve=>setTimeout(resolve,450*(attempt+1)));
   }
