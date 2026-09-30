@@ -36,7 +36,21 @@ async function related(work){
   if(!query)return[];
   const data=await request("https://api.openalex.org/works?"+new URLSearchParams({search:query,per_page:"8"}));
   return data.results||[];
+}async function related(work){
+  const ids=Array.isArray(work.related_works)?work.related_works:[];
+  if(ids.length){
+    return Promise.all(ids.slice(0,8).map(id=>request("https://api.openalex.org/works/"+encodeURIComponent(String(id).split("/").pop())).catch(()=>null))).then(x=>x.filter(Boolean));
+  }
+  const query=work.display_name||work.title||"";
+  if(!query)return[];
+  const data=await request("https://api.openalex.org/works?"+new URLSearchParams({search:query,per_page:"8"}));
+  return data.results||[];
+}async function references(work){
+  const ids=Array.isArray(work.referenced_works)?work.referenced_works:[];
+  if(!ids.length)return[];
+  return Promise.all(ids.slice(0,6).map(id=>request("https://api.openalex.org/works/"+encodeURIComponent(String(id).split("/").pop())).catch(()=>null))).then(x=>x.filter(Boolean));
 }
+
 function authorLink(a){const name=a.author?.display_name||"Unknown author",id=a.author?.id?.split("/").pop()||"";return '<a href="author.html?'+(id?"id="+encodeURIComponent(id)+"&":"")+"name="+encodeURIComponent(name)+'">'+esc(name)+'</a>'}
 function localHistory(id,title,authors,venue,year){
   localStorage.setItem("academicLastViewed",JSON.stringify({id,title,url:location.href,authors,venue,year}));
@@ -67,7 +81,11 @@ async function run(){
   const w=loaded.work,title=w.display_name||w.title||"Untitled",updates=w.update_to||w["update-to"]||[],hasRetraction=Array.isArray(updates)&&updates.some(x=>String(x.type||"").toLowerCase()==="retraction"),fullTextUrl=w.fullTextUrl||((w.open_access?.is_oa)?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):""),authors=(w.authorships||[]).filter(a=>a.author?.display_name),abstract=clean(w.abstract_inverted_index?reconstruct(w.abstract_inverted_index):w.abstract||""),doi=(w.doi||"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,""),venue=w.primary_location?.source?.display_name||"Unknown venue",year=w.publication_year||"";
   document.title=title+" — Academic Library";
   const meta=document.querySelector('meta[name="description"]');if(meta)meta.setAttribute("content",(abstract||"Academic article record with authors, publication details and related research.").slice(0,155));
-  let rel=[];try{rel=(await related(w)).filter(x=>x.id!==w.id).slice(0,6)}catch{}
+  let rel=[],refs=[];try{
+    [rel,refs]=await Promise.all([related(w).catch(()=>[]),references(w).catch(()=>[])]);
+    rel=rel.filter(x=>x.id!==w.id).slice(0,6);
+    refs=refs.filter(x=>x.id!==w.id).slice(0,6);
+  }catch{}
   const authorNames=authors.map(a=>a.author.display_name);
   localHistory(loaded.recordId,title,authorNames,venue,year);
   const topics=(w.topics||[]).map(x=>x.display_name).filter(Boolean).slice(0,6);
@@ -80,7 +98,8 @@ async function run(){
     '<h2 id="authors">Authors</h2><div class="author-list">'+(authors.map(authorLink).join("")||"No author metadata available.")+'</div>'+
     '<h2 id="details">Publication details</h2><p>Published in <a href="journal.html?'+(w.primary_location?.source?.id?"id="+encodeURIComponent(String(w.primary_location.source.id).split("/").pop())+"&":"")+'name='+encodeURIComponent(venue)+'">'+esc(venue)+'</a> in <strong>'+esc(year||"n.d.")+'</strong>. The record reports <strong>'+esc(w.cited_by_count||0)+'</strong> citations.</p>'+
     '<h2 id="topics">Topics</h2><div class="author-list">'+(concepts.map(x=>'<a href="search.html?q='+encodeURIComponent(x)+'">'+esc(x)+'</a>').join("")||"No topic metadata available.")+'</div>'+
-    '<h2 id="related">Related research</h2><div class="related">'+(rel.length?rel.map(x=>'<a href="article.html?id='+encodeURIComponent(x.id)+'">'+esc(x.display_name||x.title||"Untitled")+'</a>').join(""):'<span class="meta">No related records were returned. You can continue with the author, venue or topic links above.</span>')+'</div></div>'+
+    '<h2 id="related">Related research</h2><div class="related">'+(rel.length?rel.map(x=>'<a href="article.html?id='+encodeURIComponent(x.id)+'">'+esc(x.display_name||x.title||"Untitled")+'</a>').join(""):'<span class="meta">No related records were returned. You can continue with the author, venue or topic links above.</span>')+'</div>'+
+    '<h2 id="references">Reference trail</h2><div class="related">'+(refs.length?refs.map(x=>'<a href="article.html?id='+encodeURIComponent(x.id)+'">'+esc(x.display_name||x.title||"Untitled")+'</a>').join(""):'<span class="meta">No reference records were returned in the indexed metadata.</span>')+'</div></div>'+
     '<aside class="infobox"><h3>Article details</h3><dl><dt>Type</dt><dd>'+esc(w.type||"work")+'</dd><dt>Date</dt><dd>'+esc(w.publication_date||"n.d.")+'</dd><dt>Venue</dt><dd><a href="journal.html?'+(w.primary_location?.source?.id?"id="+encodeURIComponent(String(w.primary_location.source.id).split("/").pop())+"&":"")+'name='+encodeURIComponent(venue)+'">'+esc(venue)+'</a></dd><dt>Citations</dt><dd>'+esc(w.cited_by_count||0)+'</dd>'+(fullTextUrl?'<dt>Full text</dt><dd><a href="'+safeHref(fullTextUrl)+'" target="_blank" rel="noopener">Available link ↗</a></dd>':"")+'<dt>Source</dt><dd><a href="'+esc(sourceHref)+'" target="_blank" rel="noopener">Record ↗</a></dd>'+(doi?'<dt>DOI</dt><dd><a href="https://doi.org/'+encodeURIComponent(doi)+'" target="_blank" rel="noopener">'+esc(doi)+'</a></dd>':"")+'</dl>'+(hasRetraction?'<div class="integrity-warning"><strong>Post-publication update: retraction signal</strong><p>Crossref reports a retraction-related update for this record. Verify the publisher record before citing.</p></div>':(updates.length?'<div class="integrity-note"><strong>Post-publication update recorded</strong><p>This record has a Crossref update relationship. Check the original source for details.</p></div>':""))+'<p><button id="saveArticle" class="plain-btn">'+(saved(loaded.recordId)?"Saved":"Save to library")+'</button></p><div id="notes" class="article-note"><label for="paperNote"><strong>Personal note</strong></label><textarea id="paperNote" placeholder="Why is this paper useful? Record a method, finding, question or follow-up.">'+esc(readNotes(loaded.recordId))+'</textarea><button id="savePaperNote" class="plain-btn" type="button">Save note</button><span id="paperNoteStatus" class="meta" aria-live="polite"></span></div><div class="cite-box">'+esc(title+". "+authorNames.slice(0,3).join(", ")+". "+venue+", "+(year||"n.d.")+".")+'</div></aside></div>';
   document.querySelector("#saveArticle").addEventListener("click",()=>addSave({id:loaded.recordId,title,url:location.href,pageUrl:location.href,authors:authorNames,venue,year}));
   document.querySelector("#savePaperNote")?.addEventListener("click",()=>{const ok=writeNotes(loaded.recordId,document.querySelector("#paperNote")?.value||"");document.querySelector("#paperNoteStatus").textContent=ok?"Saved locally.":"Unable to save in this browser."});
