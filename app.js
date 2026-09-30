@@ -5,7 +5,7 @@ const answerEl=$("#answerLayer"),suggestionsEl=$("#querySuggestions"),resultFilt
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 const clean=s=>String(s??"").replace(/<[^>]*>/g,"").replace(/\s+/g," ").trim();
 const safeHref=value=>{const v=String(value||"").trim();return (/^https?:\/\//i.test(v)||/^(?:article|author|journal|search|saved|history)\.html(?:[?#].*)?$/i.test(v))?v:"#"};
-const normalizeDoi=q=>q.trim().replace(/^doi:\s*/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").replace(/^doi\.org\//i,"").replace(/[.,;)>]+$/,"").trim();
+const normalizeDoi=q=>q.trim().replace(/^doi:\s*/i,"").replace(/^doi\s+/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").replace(/^doi\.org\//i,"").replace(/[.,;)>]+$/,"").trim();
 
 function loadJson(key,fallback){try{const v=JSON.parse(localStorage.getItem(key)||"");return v??fallback}catch{return fallback}}
 function getSaved(){return loadJson("academicSaved",[])}
@@ -24,7 +24,7 @@ const STOP=new Set("a an and are as at be by can could did do does for from how 
 function tokens(q){return q.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/).filter(Boolean).filter(x=>x.length>1&&!STOP.has(x))}
 function intentOf(q){
   const x=q.trim().toLowerCase(),doi=normalizeDoi(q);
-  if(/^10\.\d{4,9}\/\S+$/i.test(doi))return"identifier";
+  if(/(^|\s)10\.\d{4,9}\/\S+/i.test(doi))return"identifier";
   if(/^https?:\/\/(?:dx\.)?doi\.org\/10\.\d{4,9}\/\S+$/i.test(x)||/^doi:\s*10\.\d{4,9}\/\S+$/i.test(x))return"identifier";
   if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";
   if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";
