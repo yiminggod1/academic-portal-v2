@@ -31,15 +31,15 @@ function intentOf(q){
   if(/(^|\s)10\.\d{4,9}\/\S+/i.test(doi))return"identifier";
   if(/^https?:\/\/(?:dx\.)?doi\.org\/10\.\d{4,9}\/\S+$/i.test(x)||/^doi:\s*10\.\d{4,9}\/\S+$/i.test(x))return"identifier";
   if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";
-  if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";
-  if(/\b(journal|venue|published in)\b/.test(x))return"venue";
   if(/\b(latest|recent|newest|this year)\b/.test(x))return"latest";
   if(/\b(review|systematic review|survey|literature review)\b/.test(x))return"review";
-  if(/\b(what is|what are|define|definition|tell me about)\b/.test(x))return"definition";
+  if(/\b(compare|comparison|versus|vs\.)\b/.test(x))return"comparison";
+  if(/\b(who is|author|authors|researcher|scientist)\b/.test(x))return"author";
+  if(/\b(journal|venue|published in)\b/.test(x))return"venue";
   if(/\b(how to)\b/.test(x))return"howto";
-  if(/\b(how does|how do|how can|mechanism|process)\b/.test(x))return"mechanism";
   if(/\b(why does|why do|why is|what causes|what cause|causes?)\b/.test(x))return"causes";
-  if(/\b(best|which|compare|comparison|versus|vs\.)\b/.test(x))return"comparison";
+  if(/\b(how does|how do|how can|mechanism|process)\b/.test(x))return"mechanism";
+  if(/\b(what is|what are|define|definition|tell me about)\b/.test(x))return"definition";
   return"literature";
 }
 function stripQuestion(q){
