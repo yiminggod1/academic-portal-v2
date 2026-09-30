@@ -43,13 +43,13 @@ async function related(work){
 }
 async function citedBy(work){
   const id=String(work.id||"").split("/").pop();
-  if(!/^W\\d+$/i.test(id))return[];
+  if(!/^W\d+$/i.test(id))return[];
   try{
     const data=await request("https://api.openalex.org/works?"+new URLSearchParams({filter:"cites:"+id,per_page:"6",sort:"cited_by_count:desc"}));
     return data.results||[];
   }catch{return[]}
 }
-function norm(value){return String(value||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").replace(/\\s+/g," ").trim()}
+function norm(value){return String(value||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").replace(/\\s+/g," ").trim()}
 function relationReasons(item,work,kind){
   const reasons=[];
   if(kind==="references"){reasons.push("Referenced by this paper");return reasons}
