@@ -81,13 +81,23 @@ function intentLabel(intent){
   return({identifier:"Identifier lookup",author:"Author-focused search",venue:"Publication venue search",latest:"Recent research",review:"Review / literature survey",definition:"Concept / definition",howto:"How-to / methods",mechanism:"How it works / mechanism",causes:"Causes / explanation",comparison:"Comparison / evidence",access:"Full-text / access-focused search",literature:"Literature discovery"})[intent]||"Literature discovery";
 }
 
-async function request(url){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
-  try{
-    const response=await fetch(url,{signal:controller.signal});
-    if(!response.ok)throw new Error("HTTP "+response.status);
-    return await response.json();
-  }finally{clearTimeout(timer)}
+async async function request(url){
+  let lastError;
+  for(let attempt=0;attempt<3;attempt++){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch(url,{signal:controller.signal});
+      if(response.ok)return await response.json();
+      lastError=new Error("HTTP "+response.status);
+      if(![429,500,502,503,504].includes(response.status))throw lastError;
+    }catch(error){
+      lastError=error;
+      if(error?.name==="AbortError"&&attempt===2)throw error;
+      if(error?.name!=="AbortError"&&attempt===2)throw error;
+    }finally{clearTimeout(timer)}
+    await new Promise(resolve=>setTimeout(resolve,450*(attempt+1)));
+  }
+  throw lastError||new Error("Request failed");
 }
 
 function mapOpenAlex(w){
@@ -106,14 +116,16 @@ function mapOpenAlex(w){
 function mapCrossref(w){
   const key=w.DOI||w.URL||w.title?.[0]||"untitled";
   const external=w.URL||(w.DOI?"https://doi.org/"+w.DOI:"");
-  const fullTextUrl=w.link?.find(l=>l?.URL)?.URL||"";
+  const preferredLink=(w.link||[]).find(l=>/application\/pdf/i.test(l?.["content-type"]||""))||w.link?.find(l=>l?.URL);
+  const fullTextUrl=preferredLink?.URL||"";
+  const openAccess=Array.isArray(w.license)&&w.license.length>0;
   return{
     id:"cr:"+key,title:w.title?.[0]||"Untitled",
     authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),
     venue:w["container-title"]?.[0]||"",
     year:String(((w.published?.["date-parts"]?.[0]||[])[0]||"")),
     cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),
-    url:external,sourceUrl:external,fullTextUrl,
+    url:external,sourceUrl:external,fullTextUrl,openAccess,
     pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""
   };
 }
