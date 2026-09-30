@@ -160,6 +160,7 @@ function mapCrossref(w){
   const preferredLink=(w.link||[]).find(l=>/application\/pdf/i.test(l?.["content-type"]||""))||w.link?.find(l=>l?.URL);
   const fullTextUrl=preferredLink?.URL||"";
   const openAccess=Array.isArray(w.license)&&w.license.length>0;
+  const licenseUrl=w.license?.find(x=>x?.URL)?.URL||"";
   return{
     id:"cr:"+key,title:w.title?.[0]||"Untitled",
     authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),
@@ -167,7 +168,7 @@ function mapCrossref(w){
     venue:w["container-title"]?.[0]||"",
     year:String(((w.published?.["date-parts"]?.[0]||[])[0]||"")),
     cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),
-    url:external,sourceUrl:external,fullTextUrl,openAccess,
+    url:external,sourceUrl:external,fullTextUrl,openAccess,licenseUrl,
     updated:Array.isArray(w["update-to"])&&w["update-to"].length>0,
     updateTypes:(w["update-to"]||[]).map(x=>x.type||x.label).filter(Boolean),
     retracted:Array.isArray(w["update-to"])&&w["update-to"].some(x=>String(x.type||"").toLowerCase()==="retraction"),
@@ -212,6 +213,27 @@ async function searchEntities(plan){
   return{type:"",items:[]};
 }
 
+function mergeRecords(old,item){
+  const merged={...old};
+  for(const key of ["title","authors","venue","year","doi","url","sourceUrl","fullTextUrl","licenseUrl","pageUrl","oaId","venueId"])if(!merged[key]&&item[key])merged[key]=item[key];
+  if((item.abstract||"").length>(merged.abstract||"").length)merged.abstract=item.abstract;
+  merged.cited=Math.max(Number(old.cited)||0,Number(item.cited)||0);
+  merged.openAccess=!!old.openAccess||!!item.openAccess;
+  merged.retracted=!!old.retracted||!!item.retracted;
+  merged.updated=!!old.updated||!!item.updated;
+  merged.updateTypes=[...new Set([...(old.updateTypes||[]),...(item.updateTypes||[])])];
+  merged.topics=[...new Set([...(old.topics||[]),...(item.topics||[])])].slice(0,6);
+  merged.authorObjects=old.authorObjects?.length?old.authorObjects:(item.authorObjects||[]);
+  merged.referencedWorks=old.referencedWorks?.length?old.referencedWorks:(item.referencedWorks||[]);
+  if(item.oaId)merged.oaId=item.oaId;
+  if(item.venueId)merged.venueId=item.venueId;
+  if(item.fullTextUrl)merged.fullTextUrl=item.fullTextUrl;
+  if(item.licenseUrl)merged.licenseUrl=item.licenseUrl;
+  if(item.sourceUrl&&String(item.sourceUrl).includes("openalex.org"))merged.sourceUrl=item.sourceUrl;
+  if(item.pageUrl)merged.pageUrl=item.pageUrl;
+  if(item.retracted)merged.retracted=true;
+  return merged;
+}
 function dedupe(records){
   const seen=new Map(),out=[];
   for(const item of records){
@@ -219,79 +241,14 @@ function dedupe(records){
     if(!key)continue;
     if(seen.has(key)){
       const old=seen.get(key);
-      if((item.abstract||"").length>(old.abstract||"").length)Object.assign(old,item);
+      Object.assign(old,mergeRecords(old,item));
       continue;
     }
-    seen.set(key,item);out.push(item);
+    seen.set(key,{...item});out.push(seen.get(key));
   }
   return out;
 }
-function relevanceScore(item,plan){
-  const title=item.title.toLowerCase(),text=(item.title+" "+item.abstract+" "+item.authors+" "+item.venue).toLowerCase();
-  let score=0;
-  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=42;
-  else if(hasExactPhrase(item,plan.core))score+=28;
-  const terms=plan.terms;
-  if(title===plan.core.toLowerCase())score+=24;
-  for(const term of terms){
-    if(title.includes(term))score+=7;
-    else if(text.includes(term))score+=2;
-  }
-  if(terms.length&&terms.every(t=>title.includes(t)))score+=8;
-  if(plan.intent==="review"&&/review|survey|meta-analysis/.test(text))score+=7;
-  if(plan.intent==="definition"&&/overview|fundament|introduction/.test(text))score+=4;
-  if(plan.intent==="howto"&&/method|protocol|procedure|workflow/.test(text))score+=5;
-  if(plan.intent==="mechanism"&&/mechanism|pathway|process/.test(text))score+=5;
-  if(plan.intent==="causes"&&/cause|driver|mechanism|factor/.test(text))score+=4;
-  if(plan.intent==="comparison"&&/compar|versus|vs\.|trade-off|benchmark/.test(text))score+=5;
-  if(plan.intent==="access"&&item.openAccess)score+=8;
-  if(item.abstract)score+=2;
-  if(item.fullTextUrl)score+=2;
-  if(item.retracted)score-=30;
-  score+=Math.min(6,Math.log10((item.cited||0)+1));
-  if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
-  return score;
-}
-function evidenceExcerpt(value,terms){
-  const text=clean(value);if(!text)return"";
-  const sentences=text.split(/(?<=[.!?])\s+/).filter(Boolean);
-  let best=sentences[0]||text,bestScore=-1;
-  for(const sentence of sentences){
-    const low=sentence.toLowerCase();
-    const score=terms.reduce((n,t)=>n+(low.includes(t)?1:0),0);
-    if(score>bestScore){bestScore=score;best=sentence}
-  }
-  return best.slice(0,420);
-}
-function buildAnswer(plan,data,failed,entityResult){
-  if(!answerEl)return;
-  const evidence=data.filter(x=>x.abstract).slice(0,3);
-  const oa=data.filter(x=>x.openAccess).length,doi=data.filter(x=>x.doi).length,abstracts=data.filter(x=>x.abstract).length;
-  const pathLinks=[
-    ["Reviews","review"],["Latest","latest"],["Methods","howto"],["Open access","access"]
-  ].map(([label,mode])=>'<a class="research-path" href="search.html?q='+encodeURIComponent(plan.core)+'&mode='+encodeURIComponent(mode)+'">'+esc(label)+'</a>').join("");
-  const next=({
-    latest:"Use Newest sorting to emphasize publication date.",
-    review:"Start with review or survey records, then follow their references and related work.",
-    definition:"Use an overview or review as the starting point, then inspect the primary studies.",
-    howto:"Look for methods and protocols, then verify the procedure in the original source.",
-    comparison:"Compare multiple papers or systematic reviews; search relevance alone cannot establish a universal best choice.",
-    access:"Use records marked Open Access and verify the license or full-text source before relying on it.",
-    mechanism:"Compare several abstracts because mechanisms can depend on the system and study design.",
-    causes:"Compare several studies and reviews before treating a proposed cause as established.",
-    author:"The author cards below are entity matches; use the works to inspect the person's research directly.",
-    venue:"The venue cards below are entity matches; use them to browse the publication's recent work.",
-    identifier:"This is an exact identifier lookup; verify the DOI record before formal citation.",
-    literature:"Open the closest matches, compare abstracts, then follow authors, venues and related work."
-  })[plan.intent]||"Open the closest matches, compare abstracts, then follow authors, venues and related work.";
-  const entityHtml=entityResult?.items?.length?'<div class="answer-entities"><div class="evidence-label">'+esc(entityResult.type==="author"?"PEOPLE":"PUBLICATION VENUES")+'</div>'+entityResult.items.slice(0,3).map(e=>'<a class="entity-card" href="'+safeHref(e.href)+'"><strong>'+esc(e.name)+'</strong><span>'+esc(entityResult.type==="author"?(e.works||0)+" works · "+(e.citations||0)+" citations":(e.works||0)+" works indexed")+'</span></a>').join("")+'</div>':"";
-  const evidenceHtml=evidence.length?'<div class="evidence-grid">'+evidence.map(x=>'<article><div class="evidence-label">EVIDENCE FROM RECORD</div><h3 class="evidence-title">'+esc(x.title)+'</h3><p>'+esc(evidenceExcerpt(x.abstract,plan.terms))+(x.abstract.length>420?"…":"")+'</p><a href="'+safeHref(x.oaId?"article.html?id="+encodeURIComponent(x.oaId):x.pageUrl||x.url||"#")+'">Read the record →</a></article>').join("")+'</div>':'<div class="note">No abstracts were returned for the leading matches. Open the records or broaden the search for more context.</div>';
-  answerEl.innerHTML='<div class="answer-head"><div><span class="section-label">SEARCH INTERPRETATION</span><h2>'+esc(intentLabel(plan.intent))+'</h2></div><span class="answer-query">'+esc(plan.search)+'</span></div><p class="answer-summary">I interpreted your query as <strong>'+esc(plan.core)+'</strong>. The answer area uses traceable metadata and excerpts from returned scholarly records rather than inventing a conclusion.</p><div class="answer-stats"><span>'+data.length+' records</span><span>'+abstracts+' abstracts</span><span>'+doi+' DOI</span><span>'+oa+' OA signals</span></div>'+evidenceHtml+'<p class="answer-next"><strong>Next step:</strong> '+esc(next)+(failed?' One scholarly index was unavailable.':"")+'</p>'+entityHtml;
-  const queries=relatedQueries(plan);
-  if(suggestionsEl)suggestionsEl.innerHTML=queries.map(q=>'<a href="?q='+encodeURIComponent(q)+'">'+esc(q)+'</a>').join("");
-  const paths=document.createElement("div");paths.className="research-paths";paths.innerHTML='<span class="path-label">Research paths</span>'+pathLinks;
-  answerEl.querySelector(".answer-next")?.before(paths);
-}
+
 function matchSummary(item,plan){
   const terms=plan.terms;
   const titleHits=terms.filter(t=>(item.title||"").toLowerCase().includes(t)).length;
