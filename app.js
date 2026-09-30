@@ -149,6 +149,7 @@ function mapOpenAlex(w){
     abstract:reconstructInverted(w.abstract_inverted_index),
     url:w.primary_location?.landing_page_url||w.doi||w.id,sourceUrl:w.id,
     fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",
+    referencedWorks:Array.isArray(w.referenced_works)?w.referenced_works.slice(0,8):[],
     openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,updated:false,updateTypes:[],
     topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)
   };
