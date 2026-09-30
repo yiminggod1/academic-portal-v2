@@ -4,13 +4,21 @@ const name=params.get("name")||"";
 const authorId=params.get("id")||"";
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 async function request(url){
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),10000);
-  try{
-    const response=await fetch(url,{signal:controller.signal});
-    if(!response.ok)throw new Error("Request failed");
-    return await response.json();
-  }finally{clearTimeout(timer)}
+  let lastError;
+  for(let attempt=0;attempt<3;attempt++){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch(url,{signal:controller.signal});
+      if(response.ok)return await response.json();
+      lastError=new Error("HTTP "+response.status);
+      if(![429,500,502,503,504].includes(response.status))throw lastError;
+    }catch(error){
+      lastError=error;
+      if(attempt===2)throw error;
+    }finally{clearTimeout(timer)}
+    await new Promise(resolve=>setTimeout(resolve,450*(attempt+1)));
+  }
+  throw lastError||new Error("Request failed");
 }
 function message(html){root.innerHTML='<div class="note">'+html+'</div>'}
 async function run(){
