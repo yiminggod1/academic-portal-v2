@@ -49,7 +49,13 @@ jobs:
           const search = fs.readFileSync('search.html','utf8');
           if ((search.match(/id=["']answerLayer["']/g)||[]).length !== 1) throw new Error('search.html answerLayer count is not 1');
           if ((search.match(/id=["']querySuggestions["']/g)||[]).length !== 1) throw new Error('search.html querySuggestions count is not 1');
-          if (!fs.readFileSync('app.js','utf8').includes('data-compare')) throw new Error('Comparison control is missing from app.js');
+          const app = fs.readFileSync('app.js','utf8');
+          const article = fs.readFileSync('article.js','utf8');
+          const saved = fs.readFileSync('saved.js','utf8');
+          if (!app.includes('data-compare') || !app.includes('function matchSummary')) throw new Error('Search differentiation layer is missing');
+          if (!article.includes('async function related(work)')) throw new Error('Article related-research function is missing');
+          if (!article.includes('savePaperNote') || !article.includes('academicNotes')) throw new Error('Per-paper notes are missing');
+          if (!saved.includes('Export BibTeX') && !fs.readFileSync('saved.html','utf8').includes('Export BibTeX')) throw new Error('Citation export UI is missing');
           console.log('Static QA passed for '+htmlFiles.length+' HTML pages.');
           NODE
       - name: Live scholarly API smoke test
