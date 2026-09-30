@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://library.reading.writing.chemistry.student.allmass.me/sitemap.xml
