@@ -1,4 +1,4 @@
-const root=document.querySelector("#journal"),name=new URLSearchParams(location.search).get("name")||"";
+const params=new URLSearchParams(location.search),name=params.get("name")||"",sourceId=params.get("id")||"";
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 async function request(url){
   let lastError;
@@ -20,8 +20,20 @@ async function request(url){
 async function run(){
  if(!name){root.innerHTML='<div class="note">No journal was specified. <a href="search.html">Return to search.</a></div>';return}
  try{
-  const src=await request("https://api.openalex.org/sources?"+new URLSearchParams({search:name,per_page:"5"}));
-  const source=src.results?.[0];
+  let source;
+  if(sourceId){
+    source=await request("https://api.openalex.org/sources/"+encodeURIComponent(sourceId));
+  }else{
+    const src=await request("https://api.openalex.org/sources?"+new URLSearchParams({search:name,per_page:"5"}));
+    const matches=(src.results||[]).filter(Boolean);
+    if(!matches.length){root.innerHTML='<div class="note">No matching publication venue was found. <a href="search.html?q='+encodeURIComponent(name)+'">Search the venue title instead →</a></div>';return}
+    if(matches.length>1){
+      document.title=(source.display_name||name)+" — Academic Library";
+    root.innerHTML='<div class="kicker">VENUE MATCHES</div><h1>Choose the publication venue.</h1><p class="lead">Several publication sources match “'+esc(name)+'”. Check the work count before opening a venue page.</p><div class="results">'+matches.map(s=>'<article class="result"><h2><a href="journal.html?id='+encodeURIComponent((s.id||"").split("/").pop())+'&name='+encodeURIComponent(s.display_name||"")+'">'+esc(s.display_name||"Unknown venue")+'</a></h2><div class="meta">'+esc(s.works_count||0)+' works indexed</div></article>').join("")+'</div>';
+      return;
+    }
+    source=matches[0];
+  }
   let works;
   if(source?.id){
    works=await request("https://api.openalex.org/works?"+new URLSearchParams({filter:"primary_location.source.id:"+source.id.split("/").pop(),sort:"publication_date:desc",per_page:"15"}));
