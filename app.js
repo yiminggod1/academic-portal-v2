@@ -9,6 +9,10 @@ const normalizeDoi=q=>q.trim().replace(/^doi:\s*/i,"").replace(/^doi\s+/i,"").re
 
 function loadJson(key,fallback){try{const v=JSON.parse(localStorage.getItem(key)||"");return v??fallback}catch{return fallback}}
 function getSaved(){return loadJson("academicSaved",[])}
+function getCompared(){return loadJson("academicCompare",[])}
+function setCompared(list){localStorage.setItem("academicCompare",JSON.stringify(list.slice(0,4)))}
+function renderCompareBar(message=""){const bar=$("#compareBar"),count=$("#compareCount"),hint=$("#compareHint");if(!bar)return;const n=getCompared().length;bar.hidden=n===0;if(count)count.textContent=n;if(hint)hint.textContent=message||"Compare papers side by side."}
+function syncCompareControls(){const ids=new Set(getCompared().map(x=>x.id));document.querySelectorAll("[data-compare]").forEach(input=>{input.checked=ids.has(input.dataset.compare)});renderCompareBar()}
 function saveRecord(item){if(!item)return;const next=[item,...getSaved().filter(x=>x.id!==item.id)].slice(0,100);localStorage.setItem("academicSaved",JSON.stringify(next))}
 function removeSaved(id){localStorage.setItem("academicSaved",JSON.stringify(getSaved().filter(x=>x.id!==id)))}
 function addHistory(item){if(!item)return;const next=[item,...loadJson("academicHistory",[]).filter(x=>x.id!==item.id)].slice(0,30);localStorage.setItem("academicHistory",JSON.stringify(next))}
@@ -226,10 +230,11 @@ function buildAnswer(plan,data,failed,entityResult){
 }
 function resultCard(item){
   const saved=getSaved().some(x=>x.id===item.id);
+  const compared=getCompared().some(x=>x.id===item.id);
   const href=safeHref(item.oaId?"article.html?id="+encodeURIComponent(item.oaId):item.pageUrl||item.url||"#");
   const badges=(item.retracted?'<span class="result-badge result-warning">Retracted</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':"")+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
   const links=(item.fullTextUrl?'<a href="'+safeHref(item.fullTextUrl)+'" target="_blank" rel="noopener">Full text ↗</a>':"")+(item.doi?'<a href="https://doi.org/'+encodeURIComponent(item.doi)+'" target="_blank" rel="noopener">DOI ↗</a>':"")+(item.sourceUrl?'<a href="'+safeHref(item.sourceUrl)+'" target="_blank" rel="noopener">Source record ↗</a>':"");
-  return'<article class="result" data-record-id="'+esc(item.id)+'"><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
+  return '<article class="result" data-record-id="'+esc(item.id)+'"><div class="result-tools"><label class="compare-toggle"><input type="checkbox" data-compare="'+esc(item.id)+'" '+(compared?"checked":"")+'> Compare</label><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button></div><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
 }
 function syncUrl(){
   const p=new URLSearchParams(location.search);
@@ -295,6 +300,7 @@ async function run(raw){
     results.innerHTML=data.map(resultCard).join("")||'<div class="note"><strong>No close match found.</strong><br>Try a related search, remove a phrase, or broaden the date range.</div>';
     results.removeAttribute("aria-busy");
     applyResultFilter();
+    syncCompareControls();
     buildAnswer(plan,data,failed,{type:"",items:[]});
     entityPromise.then(entityResult=>{if(runId===searchRun&&entityResult?.items?.length)buildAnswer(plan,data,failed,entityResult)}).catch(()=>{});
   }catch(error){
@@ -313,6 +319,18 @@ results?.addEventListener("click",e=>{
     if(item)addHistory({id:item.id,title:item.title,url:link.href,authors:item.authors,venue:item.venue,year:item.year});
     return;
   }
+  const compareInput=e.target.closest("[data-compare]");
+  if(compareInput){
+    const id=compareInput.dataset.compare,item=dataCache.find(x=>x.id===id),current=getCompared();
+    if(!item)return;
+    if(compareInput.checked){
+      if(current.some(x=>x.id===id))return;
+      if(current.length>=4){compareInput.checked=false;renderCompareBar("Choose up to 4 papers for one comparison.");return}
+      setCompared([...current,item]);
+    }else setCompared(current.filter(x=>x.id!==id));
+    renderCompareBar();
+    return;
+  }
   const saveButton=e.target.closest("[data-save]");
   if(!saveButton)return;
   const id=saveButton.dataset.save,item=dataCache.find(x=>x.id===id);
@@ -321,6 +339,7 @@ results?.addEventListener("click",e=>{
 });
 $("#savedBtn")?.addEventListener("click",()=>location.href="saved.html");
 resultFilter?.addEventListener("input",applyResultFilter);
+$("#clearCompare")?.addEventListener("click",()=>{setCompared([]);syncCompareControls();});
 $("#source")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
 $("#sort")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
 ["openAccessOnly","abstractOnly","doiOnly","mode"].forEach(id=>$("#"+id)?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}}));
