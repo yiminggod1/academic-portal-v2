@@ -1,1 +1,48 @@
-const root=document.querySelector("#author"),p=new URLSearchParams(location.search),name=p.get("name")||"",authorId=p.get("id")||"";const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));async function request(url){const c=new AbortController(),t=setTimeout(()=>c.abort(),10000);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error();return await r.json()}finally{clearTimeout(t)}}async function run(){if(!name&&!authorId){root.innerHTML='<div class="note">No author was specified.</div>';return}let a;if(authorId)a=await request("https://api.openalex.org/authors/"+encodeURIComponent(authorId));else{const j=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:name,per_page:"5"}));a=j.results?.[0]}if(!a){root.innerHTML='<div class="note">No author record found.</div>';return}document.title=a.display_name+" — Academic Library";const works=await request("https://api.openalex.org/works?"+new URLSearchParams({filter:"author.id:"+a.id.split("/").pop(),sort:"publication_date:desc",per_page:"12"}));root.innerHTML='<div class="kicker">AUTHOR · OPENALEX</div><h1>'+esc(a.display_name)+'</h1><p class="lead">'+esc(a.last_known_institutions?.map(x=>x.display_name).join(", ")||"Scholarly author record")+'</p><div class="article-layout"><div><h2>Recent works</h2><div class="results">'+(works.results||[]).map(w=>'<article class="result"><h2><a href="article.html?id='+encodeURIComponent(w.id)+'">'+esc(w.display_name||w.title)+'</a></h2><div class="meta">'+esc(w.publication_year||"")+' · '+esc(w.cited_by_count||0)+' citations</div></article>').join("")+'</div></div><aside class="infobox"><h3>Author details</h3><dl><dt>Works</dt><dd>'+esc(a.works_count||0)+'</dd><dt>Citations</dt><dd>'+esc(a.cited_by_count||0)+'</dd><dt>h-index</dt><dd>'+esc(a.summary_stats?.h_index??"n/a")+'</dd></dl></aside></div>}run().catch(()=>root.innerHTML='<div class="note">The author index is temporarily unavailable.</div>');
+const root=document.querySelector("#author");
+const params=new URLSearchParams(location.search);
+const name=params.get("name")||"";
+const authorId=params.get("id")||"";
+const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+async function request(url){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),10000);
+  try{
+    const response=await fetch(url,{signal:controller.signal});
+    if(!response.ok)throw new Error("Request failed");
+    return await response.json();
+  }finally{clearTimeout(timer)}
+}
+function message(html){root.innerHTML='<div class="note">'+html+'</div>'}
+async function run(){
+  if(!name&&!authorId){message('No author was specified. <a href="search.html">Return to search.</a>');return}
+  let author;
+  if(authorId){
+    author=await request("https://api.openalex.org/authors/"+encodeURIComponent(authorId));
+  }else{
+    const data=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:name,per_page:"5"}));
+    author=data.results?.[0];
+  }
+  if(!author){message('No matching author record was found. <a href="search.html?q='+encodeURIComponent(name)+'">Search this name in the literature.</a>');return}
+  document.title=author.display_name+" — Academic Library";
+  const authorKey=(author.id||"").split("/").pop();
+  const works=await request("https://api.openalex.org/works?"+new URLSearchParams({filter:"author.id:"+authorKey,sort:"publication_date:desc",per_page:"12"}));
+  const institution=(author.last_known_institutions||[]).map(x=>x.display_name).filter(Boolean).join(", ");
+  const items=(works.results||[]);
+  root.innerHTML=
+    '<div class="kicker">AUTHOR · OPENALEX</div>'+
+    '<h1>'+esc(author.display_name||"Unknown author")+'</h1>'+
+    '<p class="lead">'+esc(institution||"Scholarly author record")+'</p>'+
+    '<div class="article-layout">'+
+      '<div><h2>Recent works</h2>'+
+        (items.length?
+          '<div class="results">'+items.map(w=>'<article class="result"><h2><a href="article.html?id='+encodeURIComponent(w.id)+'">'+esc(w.display_name||w.title||"Untitled")+'</a></h2><div class="meta">'+esc(w.publication_year||"n.d.")+' · '+esc(w.cited_by_count||0)+' citations</div></article>').join("")+'</div>':
+          '<div class="note">No recent indexed works were returned for this author. <a href="search.html?q='+encodeURIComponent(author.display_name||name)+'">Search by author name →</a></div>')+
+      '</div>'+
+      '<aside class="infobox"><h3>Author details</h3><dl>'+
+        '<dt>Works</dt><dd>'+esc(author.works_count||0)+'</dd>'+
+        '<dt>Citations</dt><dd>'+esc(author.cited_by_count||0)+'</dd>'+
+        '<dt>h-index</dt><dd>'+esc(author.summary_stats?.h_index??"n/a")+'</dd>'+
+      '</dl></aside>'+
+    '</div>';
+}
+run().catch(()=>message('The author index is temporarily unavailable. <a href="search.html">Return to search.</a>'));
