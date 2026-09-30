@@ -54,6 +54,11 @@ function card(x){const saved=getSaved().some(y=>y.id===x.id),href=x.oaId?"articl
 function linkForSaved(node){return node?.querySelector(".result-link")?.href||"#"}
 function historyRecord(x,href){historyAdd({id:x.id,title:x.title,url:href,authors:x.authors,venue:x.venue,year:x.year})}
 async function request(url){const c=new AbortController(),t=setTimeout(()=>c.abort(),10000);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error("Request failed");return await r.json()}finally{clearTimeout(t)}}
+function crossrefItem(w){
+ const key=w.DOI||w.URL||w.title?.[0]||"untitled";
+ return {id:"cr:"+key,title:w.title?.[0]||"Untitled",authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),venue:w["container-title"]?.[0]||"",year:((w.published?.["date-parts"]?.[0]||[])[0]||"").toString(),cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),url:w.URL||("https://doi.org/"+w.DOI),sourceUrl:w.URL||("https://doi.org/"+w.DOI),pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""};
+}
+async function exactDoi(doi){const j=await request("https://api.crossref.org/works/"+encodeURIComponent(doi));return j.message?[crossrefItem(j.message)]:[]}
 async function openalex(q,from,to,sort){const p=new URLSearchParams({search:q,per_page:"30"});if(from||to)p.set("filter","from_publication_date:"+(from||"1900")+"-01-01,to_publication_date:"+(to||"2100")+"-12-31");if(sort==="newest")p.set("sort","publication_date:desc");if(sort==="cited")p.set("sort","cited_by_count:desc");const j=await request("https://api.openalex.org/works?"+p);return(j.results||[]).map(w=>({id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title,authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),venue:w.primary_location?.source?.display_name||"",year:(w.publication_year||"").toString(),cited:w.cited_by_count||0,doi:(w.doi||"").replace("https://doi.org/",""),abstract:reconstruct(w.abstract_inverted_index),url:w.primary_location?.landing_page_url||w.doi||w.id,sourceUrl:w.id,openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)}))}
 async function openalexAuthors(q){const j=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:q,per_page:"5"}));return(j.results||[]).map(a=>({id:(a.id||"").split("/").pop(),name:a.display_name||"Unknown author",works:a.works_count||0,citations:a.cited_by_count||0,href:"author.html?id="+encodeURIComponent((a.id||"").split("/").pop())+"&name="+encodeURIComponent(a.display_name||"")}))}
 async function openalexSources(q){const j=await request("https://api.openalex.org/sources?"+new URLSearchParams({search:q,per_page:"5"}));return(j.results||[]).map(s=>({id:(s.id||"").split("/").pop(),name:s.display_name||"Unknown venue",works:s.works_count||0,href:"journal.html?name="+encodeURIComponent(s.display_name||"")}))}
@@ -67,12 +72,35 @@ async function run(rawQ){
  const from=$("#fromYear").value,to=$("#toYear").value,source=$("#source").value,sort=$("#sort").value;
  if(from&&to&&Number(from)>Number(to)){statusEl.textContent="The year range is invalid.";results.innerHTML='<div class="note">The From year must be earlier than or equal to the To year.</div>';if(answerEl)answerEl.innerHTML="";return}
  const effectiveSort=plan.intent==="latest"&&sort==="relevance"?"newest":sort;
+ const openAccessOnly=$("#openAccessOnly")?.checked;
+ const abstractOnly=$("#abstractOnly")?.checked;
  try{
-  const jobs=[];if(source==="all"||source==="openalex")jobs.push(openalex(plan.search,from,to,effectiveSort));if(source==="all"||source==="crossref")jobs.push(crossref(plan.search,from,to));
-  const entityPromise=plan.intent==="author"?openalexAuthors(plan.core):plan.intent==="venue"?openalexSources(plan.core):Promise.resolve([]);const settled=await Promise.allSettled(jobs);const entitySettled=await Promise.allSettled([entityPromise]);if(runId!==searchRun)return;
-  let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));dataCache=data;const entities=entitySettled[0]?.status==="fulfilled"?entitySettled[0].value:[];
+  let settled,entities=[];
+  if(plan.intent==="identifier"){
+    const doi=plan.core.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").trim();
+    const doiResults=await exactDoi(doi);
+    settled=[{status:"fulfilled",value:doiResults}];
+  }else{
+    const jobs=[];if(source==="all"||source==="openalex")jobs.push(openalex(plan.search,from,to,effectiveSort));if(source==="all"||source==="crossref")jobs.push(crossref(plan.search,from,to));
+    const entityPromise=plan.intent==="author"?openalexAuthors(plan.core):plan.intent==="venue"?openalexSources(plan.core):Promise.resolve([]);
+    settled=await Promise.allSettled(jobs);
+    const entitySettled=await Promise.allSettled([entityPromise]);
+    entities=entitySettled[0]?.status==="fulfilled"?entitySettled[0].value:[];
+    let initial=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));
+    if(initial.length<5&&plan.search!==plan.core){
+      const fallbackJobs=[];if(source==="all"||source==="openalex")fallbackJobs.push(openalex(plan.core,from,to,effectiveSort));if(source==="all"||source==="crossref")fallbackJobs.push(crossref(plan.core,from,to));
+      const fallback=await Promise.allSettled(fallbackJobs);
+      if(runId!==searchRun)return;
+      const merged=dedupe(initial.concat(fallback.filter(x=>x.status==="fulfilled").flatMap(x=>x.value)));
+      settled=settled.concat(fallback);
+    }
+  }
+  if(runId!==searchRun)return;
+  let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value));if(openAccessOnly)data=data.filter(x=>x.openAccess);if(abstractOnly)data=data.filter(x=>!!x.abstract);dataCache=data;
+  if(openAccessOnly)data=data.filter(x=>x.openAccess);
+  if(abstractOnly)data=data.filter(x=>!!x.abstract);
   if(effectiveSort==="relevance")data.sort((a,b)=>answerScore(b,plan)-answerScore(a,plan));else if(effectiveSort==="newest")data.sort((a,b)=>(b.year||"").localeCompare(a.year||""));else data.sort((a,b)=>(b.cited||0)-(a.cited||0));
-  const failed=settled.some(x=>x.status==="rejected");statusEl.textContent=data.length+" records found"+(failed?" · one index was unavailable":"");results.innerHTML=data.map(card).join("")||'<div class="note"><strong>No close match found.</strong><br>Try one of the related searches above, remove a specific phrase, or broaden the date range.</div>';buildAnswerLayer(plan,data,failed,entities);
+  const failed=settled.some(x=>x.status==="rejected");const oaCount=data.filter(x=>x.openAccess).length,abstractCount=data.filter(x=>x.abstract).length;statusEl.textContent=data.length+" records found"+(failed?" · one index was unavailable":"")+(data.length?(" · "+abstractCount+" abstracts · "+oaCount+" open access"):"");results.innerHTML=data.map(card).join("")||'<div class="note"><strong>No close match found.</strong><br>Try one of the related searches above, remove a specific phrase, or broaden the date range.</div>';buildAnswerLayer(plan,data,failed,entities);
  }catch(e){if(runId!==searchRun)return;statusEl.textContent="Search could not be completed";results.innerHTML='<div class="note">The scholarly indexes did not respond. Try again in a moment.</div>';if(answerEl)answerEl.innerHTML='<div class="note">No evidence could be loaded for this search. Please retry or use a related search.</div>'}
 }
 form.addEventListener("submit",e=>{e.preventDefault();const p=new URLSearchParams(location.search);p.set("q",$("#query").value);p.set("from",$("#fromYear").value);p.set("to",$("#toYear").value);p.set("source",$("#source").value);p.set("sort",$("#sort").value);history.replaceState(null,"","?"+p);run($("#query").value)});
