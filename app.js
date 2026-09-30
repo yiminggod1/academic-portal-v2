@@ -104,12 +104,13 @@ function mapOpenAlex(w){
   return{
     id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title||"Untitled",
     authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),
+    authorObjects:(w.authorships||[]).slice(0,6).map(a=>({given:a.author?.display_name||"",family:"",orcid:a.author?.orcid||""})).filter(a=>a.given),
     venue:w.primary_location?.source?.display_name||"",year:String(w.publication_year||""),
     cited:w.cited_by_count||0,doi:String(w.doi||"").replace(/^https?:\/\/doi\.org\//i,""),
     abstract:reconstructInverted(w.abstract_inverted_index),
     url:w.primary_location?.landing_page_url||w.doi||w.id,sourceUrl:w.id,
     fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",
-    openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,
+    openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,updated:false,updateTypes:[],
     topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)
   };
 }
@@ -122,10 +123,14 @@ function mapCrossref(w){
   return{
     id:"cr:"+key,title:w.title?.[0]||"Untitled",
     authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),
+    authorObjects:(w.author||[]).slice(0,6).map(a=>({given:a.given||"",family:a.family||"",orcid:a.ORCID||""})),
     venue:w["container-title"]?.[0]||"",
     year:String(((w.published?.["date-parts"]?.[0]||[])[0]||"")),
     cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),
     url:external,sourceUrl:external,fullTextUrl,openAccess,
+    updated:Array.isArray(w["update-to"])&&w["update-to"].length>0,
+    updateTypes:(w["update-to"]||[]).map(x=>x.type||x.label).filter(Boolean),
+    retracted:Array.isArray(w["update-to"])&&w["update-to"].some(x=>String(x.type||"").toLowerCase()==="retraction"),
     pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""
   };
 }
@@ -220,6 +225,9 @@ function buildAnswer(plan,data,failed,entityResult){
   if(!answerEl)return;
   const evidence=data.filter(x=>x.abstract).slice(0,3);
   const oa=data.filter(x=>x.openAccess).length,doi=data.filter(x=>x.doi).length,abstracts=data.filter(x=>x.abstract).length;
+  const pathLinks=[
+    ["Reviews","review"],["Latest","latest"],["Methods","howto"],["Open access","access"]
+  ].map(([label,mode])=>'<a class="research-path" href="search.html?q='+encodeURIComponent(plan.core)+'&mode='+encodeURIComponent(mode)+'">'+esc(label)+'</a>').join("");
   const next=({
     latest:"Use Newest sorting to emphasize publication date.",
     review:"Start with review or survey records, then follow their references and related work.",
@@ -239,14 +247,30 @@ function buildAnswer(plan,data,failed,entityResult){
   answerEl.innerHTML='<div class="answer-head"><div><span class="section-label">SEARCH INTERPRETATION</span><h2>'+esc(intentLabel(plan.intent))+'</h2></div><span class="answer-query">'+esc(plan.search)+'</span></div><p class="answer-summary">I interpreted your query as <strong>'+esc(plan.core)+'</strong>. The answer area uses traceable metadata and excerpts from returned scholarly records rather than inventing a conclusion.</p><div class="answer-stats"><span>'+data.length+' records</span><span>'+abstracts+' abstracts</span><span>'+doi+' DOI</span><span>'+oa+' OA signals</span></div>'+evidenceHtml+'<p class="answer-next"><strong>Next step:</strong> '+esc(next)+(failed?' One scholarly index was unavailable.':"")+'</p>'+entityHtml;
   const queries=relatedQueries(plan);
   if(suggestionsEl)suggestionsEl.innerHTML=queries.map(q=>'<a href="?q='+encodeURIComponent(q)+'">'+esc(q)+'</a>').join("");
+  const paths=document.createElement("div");paths.className="research-paths";paths.innerHTML='<span class="path-label">Research paths</span>'+pathLinks;
+  answerEl.querySelector(".answer-next")?.before(paths);
+}
+function matchSummary(item,plan){
+  const terms=plan.terms;
+  const titleHits=terms.filter(t=>(item.title||"").toLowerCase().includes(t)).length;
+  const bodyHits=terms.filter(t=>(item.abstract||"").toLowerCase().includes(t)).length;
+  const flags=[];
+  if(titleHits)flags.push("title "+titleHits+"/"+Math.max(terms.length,1));
+  if(bodyHits)flags.push("abstract "+bodyHits);
+  if(item.openAccess)flags.push("OA");
+  if(item.fullTextUrl)flags.push("full text");
+  if(plan.intent==="review"&&/review|survey|meta-analysis/i.test(item.title+" "+item.abstract))flags.push("review signal");
+  if(plan.intent==="comparison"&&/compar|versus|vs\.|benchmark/i.test(item.title+" "+item.abstract))flags.push("comparison signal");
+  return flags.slice(0,4).join(" · ")||"keyword match";
 }
 function resultCard(item){
   const saved=getSaved().some(x=>x.id===item.id);
   const compared=getCompared().some(x=>x.id===item.id);
   const href=safeHref(item.oaId?"article.html?id="+encodeURIComponent(item.oaId):item.pageUrl||item.url||"#");
-  const badges=(item.retracted?'<span class="result-badge result-warning">Retracted</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':"")+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
+  const badges=(item.retracted?'<span class="result-badge result-warning">Retraction signal</span>':"")+(item.updated&&!item.retracted?'<span class="result-badge result-update">Updated record</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':"")+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
   const links=(item.fullTextUrl?'<a href="'+safeHref(item.fullTextUrl)+'" target="_blank" rel="noopener">Full text ↗</a>':"")+(item.doi?'<a href="https://doi.org/'+encodeURIComponent(item.doi)+'" target="_blank" rel="noopener">DOI ↗</a>':"")+(item.sourceUrl?'<a href="'+safeHref(item.sourceUrl)+'" target="_blank" rel="noopener">Source record ↗</a>':"");
-  return '<article class="result" data-record-id="'+esc(item.id)+'"><div class="result-tools"><label class="compare-toggle"><input type="checkbox" data-compare="'+esc(item.id)+'" '+(compared?"checked":"")+'> Compare</label><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button></div><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
+  const why=matchSummary(item,currentPlan||{terms:[],intent:"literature"});
+  return '<article class="result" data-record-id="'+esc(item.id)+'"><div class="result-tools"><span class="match-summary" title="Signals used in result ordering">Why this result: '+esc(why)+'</span><label class="compare-toggle"><input type="checkbox" data-compare="'+esc(item.id)+'" '+(compared?"checked":"")+'> Compare</label><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button></div><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
 }
 function syncUrl(){
   const p=new URLSearchParams(location.search);
@@ -257,7 +281,7 @@ function syncUrl(){
   if($("#doiOnly")?.checked)p.set("doi","1");else p.delete("doi");
   history.replaceState(null,"","?"+p);
 }
-let dataCache=[],searchRun=0,baseStatus="";
+let dataCache=[],searchRun=0,baseStatus="",currentPlan=null;
 function applyResultFilter(){
   const term=(resultFilter?.value||"").trim().toLowerCase();
   const cards=[...results.querySelectorAll(".result")];
@@ -269,6 +293,7 @@ async function run(raw){
   const runId=++searchRun,q=String(raw||"").trim();
   if(!q){baseStatus="";statusEl.textContent="Enter a topic, title, author or DOI.";results.innerHTML="";if(answerEl)answerEl.innerHTML="";if(suggestionsEl)suggestionsEl.innerHTML="";return}
   const plan=planQuery(q);
+  currentPlan=plan;
   statusEl.textContent="Understanding your question…";
   results.setAttribute("aria-busy","true");
   results.innerHTML='<div class="loading">Searching scholarly metadata…</div>';
