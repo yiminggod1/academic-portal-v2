@@ -59,8 +59,21 @@ function hasExactPhrase(item,core){
   if(!phrase)return false;
   return String(item.title||"").toLowerCase().replace(/\s+/g," ").includes(phrase);
 }
+function parseQueryHints(q){
+  const raw=q.trim();
+  const authorMatch=raw.match(/^author\s*:\s*(.+)$/i);
+  const journalMatch=raw.match(/^(?:journal|venue)\s*:\s*(.+)$/i);
+  const phraseMatch=raw.match(/"([^"]+)"/);
+  return{
+    author:authorMatch?.[1]?.trim()||"",
+    venue:journalMatch?.[1]?.trim()||"",
+    phrase:phraseMatch?.[1]?.replace(/\s+/g," ").trim()||""
+  };
+}
 function intentOf(q){
-  const x=q.trim().toLowerCase(),doi=normalizeDoi(q);
+  const x=q.trim().toLowerCase(),doi=normalizeDoi(q),hints=parseQueryHints(q);
+  if(hints.author)return"author";
+  if(hints.venue)return"venue";
   if(/(^|\s)10\.\d{4,9}\/\S+/i.test(doi))return"identifier";
   if(/^https?:\/\/(?:dx\.)?doi\.org\/10\.\d{4,9}\/\S+$/i.test(x)||/^doi:\s*10\.\d{4,9}\/\S+$/i.test(x))return"identifier";
   if(/\b(open access|free paper|free papers|full text|pdf)\b/.test(x))return"access";
@@ -83,7 +96,7 @@ function modeIntent(){
   return mode==="auto"?"":mode;
 }
 function planQuery(q){
-  const forced=modeIntent(),intent=forced||intentOf(q),core=intent==="identifier"?normalizeDoi(q):(stripQuestion(q)||q.trim());
+  const forced=modeIntent(),intent=forced||intentOf(q),hints=parseQueryHints(q),operatorCore=hints.author||hints.venue||hints.phrase,core=intent==="identifier"?normalizeDoi(q):(operatorCore||stripQuestion(q)||q.trim());
   let search=core;
   if(intent==="latest")search=core+" recent research";
   if(intent==="review")search=/\breview\b/i.test(core)?core:core+" review";
@@ -93,7 +106,7 @@ function planQuery(q){
   if(intent==="causes")search=core+" mechanism";
   if(intent==="comparison")search=core+" comparison";
   if(intent==="access")search=core+" open access";
-  return{intent,core,search,terms:tokens(core),variants:searchVariants(core)};
+  return{intent,core,search,terms:tokens(core),variants:searchVariants(core),exactPhrase:hints.phrase||""};
 }
 function relatedQueries(plan){
   const q=plan.core,out=[];
@@ -222,7 +235,8 @@ function dedupe(records){
 function relevanceScore(item,plan){
   const title=item.title.toLowerCase(),text=(item.title+" "+item.abstract+" "+item.authors+" "+item.venue).toLowerCase();
   let score=0;
-  if(hasExactPhrase(item,plan.core))score+=28;
+  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=42;
+  else if(hasExactPhrase(item,plan.core))score+=28;
   const terms=plan.terms;
   if(title===plan.core.toLowerCase())score+=24;
   for(const term of terms){
@@ -289,6 +303,7 @@ function matchSummary(item,plan){
   const titleHits=terms.filter(t=>(item.title||"").toLowerCase().includes(t)).length;
   const bodyHits=terms.filter(t=>(item.abstract||"").toLowerCase().includes(t)).length;
   const flags=[];
+  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))flags.push("exact phrase");
   if(titleHits)flags.push("title "+titleHits+"/"+Math.max(terms.length,1));
   if(bodyHits)flags.push("abstract "+bodyHits);
   if(item.openAccess)flags.push("OA");
@@ -328,6 +343,7 @@ async function run(raw){
   if(!q){baseStatus="";statusEl.textContent="Enter a topic, title, author or DOI.";results.innerHTML="";if(answerEl)answerEl.innerHTML="";if(suggestionsEl)suggestionsEl.innerHTML="";return}
   const plan=planQuery(q);
   currentPlan=plan;
+  document.querySelector(".more-results")?.remove();
   statusEl.textContent="Understanding your question…";
   results.setAttribute("aria-busy","true");
   results.innerHTML='<div class="loading">Searching scholarly metadata…</div>';
