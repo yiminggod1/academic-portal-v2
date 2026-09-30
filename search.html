@@ -1,18 +1,7 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Search Literature — Academic Library</title>
-<meta name="description" content="Search chemistry and scientific literature using OpenAlex and Crossref metadata.">
-<link rel="stylesheet" href="styles.css">
-</head>
-<body>
-<header class="site-header"><a class="brand" href="index.html"><span>R/W/C</span><b>Academic Library</b></a><nav><a class="active" href="search.html">Search literature</a><a href="about.html">About</a></nav></header>
-<main class="search-page"><div class="eyebrow">LITERATURE SEARCH</div><h1>Search the research record.</h1><p class="lead">Search scholarly metadata from OpenAlex and Crossref. Results link back to persistent identifiers and source records.</p>
-<form id="searchForm" class="filters"><input id="query" placeholder="e.g. polymer electrolyte conductivity" autocomplete="off"><input id="fromYear" type="number" min="1800" max="2100" placeholder="From year"><input id="toYear" type="number" min="1800" max="2100" placeholder="To year"><select id="source"><option value="all">All sources</option><option value="openalex">OpenAlex</option><option value="crossref">Crossref</option></select><select id="sort"><option value="relevance">Relevance</option><option value="newest">Newest</option><option value="cited">Citations</option></select><button>Search</button></form>
-<div class="quick"><span>Try:</span><a href="?q=organic+photochemistry">photochemistry</a><a href="?q=drug+delivery+nanoparticles">drug delivery</a><a href="?q=electrochemistry">electrochemistry</a><a href="?q=green+chemistry">green chemistry</a></div>
-<div class="results-head"><strong id="status">Enter a research topic to begin.</strong><button id="savedBtn" class="ghost" type="button">Saved records</button></div>
-<section id="results" class="results"></section>
-</main><footer>Metadata discovery only. Always verify the source record before citing.</footer>
-<script src="app.js"></script>
-</body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Search — Academic Library</title><meta name="description" content="Search academic literature, authors, journals and chemistry research."><link rel="stylesheet" href="styles.css"></head>
+<body><header class="topbar"><a class="wordmark" href="index.html"><strong>Academic Library</strong><span>research knowledge base</span></a><form class="top-search" action="search.html"><input name="q" id="topQ" placeholder="Search Academic Library"><button>Search</button></form><nav><a class="active" href="search.html">Search</a><a href="about.html">About</a></nav></header>
+<div class="layout"><aside class="sidebar"><div class="side-title">Search</div><a href="search.html">Literature</a><a href="search.html?sort=newest">Recent</a><a href="search.html?sort=cited">Highly cited</a><div class="side-title">Browse topics</div><a href="search.html?q=chemistry">Chemistry</a><a href="search.html?q=materials+science">Materials</a><a href="search.html?q=drug+delivery">Drug delivery</a><a href="search.html?q=scientific+writing">Scientific writing</a><div class="side-title">Your library</div><a href="saved.html">Saved records</a></aside>
+<main class="wiki-main"><div class="breadcrumb">Academic Library › Search</div><h1>Search the research record</h1><p class="lead">A single search surface across OpenAlex and Crossref. Use filters to narrow the record, then open any result as a knowledge page.</p>
+<form id="searchForm" class="advanced-form"><input id="query" placeholder="Search papers, authors, topics, DOI…" autocomplete="off"><input id="fromYear" type="number" min="1800" max="2100" placeholder="From"><input id="toYear" type="number" min="1800" max="2100" placeholder="To"><select id="source"><option value="all">All sources</option><option value="openalex">OpenAlex</option><option value="crossref">Crossref</option></select><select id="sort"><option value="relevance">Relevance</option><option value="newest">Newest</option><option value="cited">Citations</option></select><button>Search</button></form>
+<div class="search-tools"><span>Popular:</span><a href="?q=organic+chemistry">organic chemistry</a><a href="?q=electrochemistry">electrochemistry</a><a href="?q=photochemistry">photochemistry</a><a href="?q=green+chemistry">green chemistry</a><button id="savedBtn" class="plain-btn">Saved records</button></div>
+<div class="results-head"><strong id="status">Enter a topic, title, author or DOI.</strong><span class="result-note">Open scholarly metadata</span></div><section id="results" class="results"></section></main></div><footer>Academic Library · Verify source records before citing.</footer><script src="app.js"></script></body></html>
