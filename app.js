@@ -221,11 +221,11 @@ async function searchEntities(plan){
   try{
     if(plan.intent==="author"){
       const data=await request("https://api.openalex.org/authors?"+new URLSearchParams({search:plan.core,per_page:"5"}));
-      return{type:"author",items:(data.results||[]).map(a=>({name:a.display_name||"Unknown author",works:a.works_count||0,citations:a.cited_by_count||0,href:"author.html?id="+encodeURIComponent((a.id||"").split("/").pop())+"&name="+encodeURIComponent(a.display_name||"")}))};
+      return{type:"author",items:(data.results||[]).map(a=>({name:a.display_name||"Unknown author",works:a.works_count||0,citations:a.cited_by_count||0,institution:(a.last_known_institutions||[]).map(x=>x.display_name).filter(Boolean).join(", "),orcid:a.orcid||"",href:"author.html?id="+encodeURIComponent((a.id||"").split("/").pop())+"&name="+encodeURIComponent(a.display_name||"")}))};
     }
     if(plan.intent==="venue"){
       const data=await request("https://api.openalex.org/sources?"+new URLSearchParams({search:plan.core,per_page:"5"}));
-      return{type:"venue",items:(data.results||[]).map(s=>({name:s.display_name||"Unknown venue",works:s.works_count||0,href:"journal.html?name="+encodeURIComponent(s.display_name||"")}))};
+      return{type:"venue",items:(data.results||[]).map(s=>({name:s.display_name||"Unknown venue",works:s.works_count||0,publisher:s.host_organization_name||s.host_organization?.display_name||"",issn:s.issn_l||"",href:"journal.html?id="+encodeURIComponent((s.id||"").split("/").pop())+"&name="+encodeURIComponent(s.display_name||"")}))};
     }
   }catch{}
   return{type:"",items:[]};
@@ -267,6 +267,32 @@ function dedupe(records){
   return out;
 }
 
+function relevanceScore(item,plan){
+  const title=String(item.title||"").toLowerCase(),text=(String(item.title||"")+" "+String(item.abstract||"")+" "+String(item.authors||"")+" "+String(item.venue||"")).toLowerCase();
+  let score=0;
+  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=42;
+  else if(hasExactPhrase(item,plan.core))score+=28;
+  const terms=plan.terms||[];
+  if(title===String(plan.core||"").toLowerCase())score+=24;
+  for(const term of terms){
+    if(title.includes(term))score+=7;
+    else if(text.includes(term))score+=2;
+  }
+  if(terms.length&&terms.every(t=>title.includes(t)))score+=8;
+  if(plan.intent==="review"&&/review|survey|meta-analysis/.test(text))score+=7;
+  if(plan.intent==="definition"&&/overview|fundament|introduction/.test(text))score+=4;
+  if(plan.intent==="howto"&&/method|protocol|procedure|workflow/.test(text))score+=5;
+  if(plan.intent==="mechanism"&&/mechanism|pathway|process/.test(text))score+=5;
+  if(plan.intent==="causes"&&/cause|driver|mechanism|factor/.test(text))score+=4;
+  if(plan.intent==="comparison"&&/compar|versus|vs\.|trade-off|benchmark/.test(text))score+=5;
+  if(plan.intent==="access"&&item.openAccess)score+=8;
+  if(item.abstract)score+=2;
+  if(item.fullTextUrl)score+=2;
+  if(item.retracted)score-=30;
+  score+=Math.min(6,Math.log10((Number(item.cited)||0)+1));
+  if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
+  return score;
+}
 function matchSummary(item,plan){
   const terms=plan.terms;
   const titleHits=terms.filter(t=>(item.title||"").toLowerCase().includes(t)).length;
