@@ -99,7 +99,7 @@ function planQuery(q){
   if(intent==="causes")search=core+" mechanism";
   if(intent==="comparison")search=core+" comparison";
   if(intent==="access")search=core+" open access";
-  return{intent,core,search,terms:tokens(core),variants:searchVariants(core),exactPhrase:hints.phrase||""};
+  return{intent,core,search,terms:tokens(core),variants:searchVariants(core),exactPhrase:hints.phrase||"",authorHint:hints.author||"",venueHint:hints.venue||""};
 }
 function relatedQueries(plan){
   const q=plan.core,out=[];
@@ -169,7 +169,7 @@ function mapOpenAlex(w){
     fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",
     referencedWorks:Array.isArray(w.referenced_works)?w.referenced_works.slice(0,8):[],
     openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,updated:false,updateTypes:[],
-    topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4)
+    topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4),sources:["OpenAlex"],sourceCount:1
   };
 }
 function mapCrossref(w){
@@ -191,7 +191,7 @@ function mapCrossref(w){
     updated:Array.isArray(w["update-to"])&&w["update-to"].length>0,
     updateTypes:(w["update-to"]||[]).map(x=>x.type||x.label).filter(Boolean),
     retracted:Array.isArray(w["update-to"])&&w["update-to"].some(x=>String(x.type||"").toLowerCase()==="retraction"),
-    pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):""
+    pageUrl:w.DOI?"article.html?doi="+encodeURIComponent(w.DOI):"",sources:["Crossref"],sourceCount:1
   };
 }
 async function searchOpenAlex(q,from,to,sort,page=1){
@@ -245,6 +245,8 @@ function mergeRecords(old,item){
   merged.topics=[...new Set([...(old.topics||[]),...(item.topics||[])])].slice(0,6);
   merged.authorObjects=old.authorObjects?.length?old.authorObjects:(item.authorObjects||[]);
   merged.referencedWorks=old.referencedWorks?.length?old.referencedWorks:(item.referencedWorks||[]);
+  merged.sources=[...new Set([...(old.sources||[]),...(item.sources||[])])];
+  merged.sourceCount=merged.sources.length||1;
   if(item.oaId)merged.oaId=item.oaId;
   if(item.venueId)merged.venueId=item.venueId;
   if(item.fullTextUrl)merged.fullTextUrl=item.fullTextUrl;
@@ -270,28 +272,69 @@ function dedupe(records){
   return out;
 }
 
+function normalizeMatchText(value){
+  return String(value||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[‐‑‒–—−]/g,"-").replace(/[^a-z0-9-]+/g," ").replace(/-/g," ").replace(/\s+/g," ").trim();
+}
+function tokenForms(term){
+  const base=normalizeMatchText(term);
+  if(!base)return[];
+  const forms=[base];
+  if(base.endsWith("ies")&&base.length>4)forms.push(base.slice(0,-3)+"y");
+  else if(base.endsWith("es")&&base.length>4)forms.push(base.slice(0,-2));
+  else if(base.endsWith("s")&&base.length>3)forms.push(base.slice(0,-1));
+  return [...new Set(forms)];
+}
+function fieldHitCount(value,terms){
+  const text=normalizeMatchText(value),words=new Set(text.split(" ").filter(Boolean));
+  return (terms||[]).reduce((n,t)=>n+(tokenForms(t).some(f=>words.has(f)||text.includes(f))?1:0),0);
+}
+function phraseWindowScore(value,terms){
+  const words=normalizeMatchText(value).split(" ").filter(Boolean);
+  if(!words.length||!(terms||[]).length)return 0;
+  const wanted=[...new Set((terms||[]).flatMap(tokenForms))];
+  const positions=[];
+  words.forEach((w,i)=>{if(wanted.includes(w))positions.push(i)});
+  if(positions.length<2)return positions.length?1:0;
+  let best=99;
+  for(let i=0;i<positions.length;i++)for(let j=i+1;j<Math.min(positions.length,i+8);j++)best=Math.min(best,positions[j]-positions[i]);
+  return best<=3?3:best<=6?2:1;
+}
 function relevanceScore(item,plan){
-  const title=String(item.title||"").toLowerCase(),text=(String(item.title||"")+" "+String(item.abstract||"")+" "+String(item.authors||"")+" "+String(item.venue||"")).toLowerCase();
-  let score=0;
-  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=42;
-  else if(hasExactPhrase(item,plan.core))score+=28;
+  const title=normalizeMatchText(item.title),abstract=normalizeMatchText(item.abstract),authors=normalizeMatchText(item.authors),venue=normalizeMatchText(item.venue);
+  const text=[title,abstract,authors,venue].filter(Boolean).join(" ");
   const terms=plan.terms||[];
-  if(title===String(plan.core||"").toLowerCase())score+=24;
-  for(const term of terms){
-    if(title.includes(term))score+=7;
-    else if(text.includes(term))score+=2;
+  let score=0;
+  const titleHits=fieldHitCount(item.title,terms),abstractHits=fieldHitCount(item.abstract,terms),authorHits=fieldHitCount(item.authors,terms),venueHits=fieldHitCount(item.venue,terms);
+  const matchedFields=Number(titleHits>0)+Number(abstractHits>0)+Number(authorHits>0)+Number(venueHits>0);
+  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=48;
+  else if(plan.exactPhrase&&normalizeMatchText(item.title).includes(normalizeMatchText(plan.exactPhrase)))score+=44;
+  if(plan.core&&normalizeMatchText(item.title)===normalizeMatchText(plan.core))score+=26;
+  score+=titleHits*9+abstractHits*3+authorHits*2+venueHits*2;
+  if(terms.length&&titleHits===terms.length)score+=10;
+  if(terms.length&&abstractHits===terms.length)score+=4;
+  score+=Math.min(6,phraseWindowScore(title,terms)*2);
+  if(terms.length&&matchedFields===0)score-=10;
+  if(plan.authorHint){
+    const authorQ=normalizeMatchText(plan.authorHint);
+    if(authors.includes(authorQ))score+=22;
+    else score-=6;
   }
-  if(terms.length&&terms.every(t=>title.includes(t)))score+=8;
-  if(plan.intent==="review"&&/review|survey|meta-analysis/.test(text))score+=7;
-  if(plan.intent==="definition"&&/overview|fundament|introduction/.test(text))score+=4;
-  if(plan.intent==="howto"&&/method|protocol|procedure|workflow/.test(text))score+=5;
-  if(plan.intent==="mechanism"&&/mechanism|pathway|process/.test(text))score+=5;
-  if(plan.intent==="causes"&&/cause|driver|mechanism|factor/.test(text))score+=4;
-  if(plan.intent==="comparison"&&/compar|versus|vs\.|trade-off|benchmark/.test(text))score+=5;
+  if(plan.venueHint){
+    const venueQ=normalizeMatchText(plan.venueHint);
+    if(venue.includes(venueQ))score+=22;
+    else score-=5;
+  }
+  if(plan.intent==="review"&&/review|survey|meta analysis|systematic review/.test(text))score+=9;
+  if(plan.intent==="definition"&&/overview|fundament|introduction/.test(text))score+=5;
+  if(plan.intent==="howto"&&/method|protocol|procedure|workflow/.test(text))score+=6;
+  if(plan.intent==="mechanism"&&/mechanism|pathway|process/.test(text))score+=6;
+  if(plan.intent==="causes"&&/cause|driver|mechanism|factor/.test(text))score+=5;
+  if(plan.intent==="comparison"&&/compar|versus|vs |trade off|benchmark/.test(text))score+=6;
   if(plan.intent==="access"&&item.openAccess)score+=8;
   if(item.abstract)score+=2;
   if(item.fullTextUrl)score+=2;
-  if(item.retracted)score-=30;
+  if(item.sourceCount>1)score+=4;
+  if(item.retracted)score-=35;
   score+=Math.min(6,Math.log10((Number(item.cited)||0)+1));
   if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
   return score;
@@ -340,6 +383,7 @@ function matchSummary(item,plan){
   const bodyHits=terms.filter(t=>(item.abstract||"").toLowerCase().includes(t)).length;
   const flags=[];
   if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))flags.push("exact phrase");
+  if(item.sourceCount>1)flags.push("both indexes");
   if(titleHits)flags.push("title "+titleHits+"/"+Math.max(terms.length,1));
   if(bodyHits)flags.push("abstract "+bodyHits);
   if(item.openAccess)flags.push("OA");
@@ -352,7 +396,7 @@ function resultCard(item){
   const saved=getSaved().some(x=>x.id===item.id);
   const compared=getCompared().some(x=>x.id===item.id);
   const href=safeHref(item.oaId?"article.html?id="+encodeURIComponent(item.oaId):item.pageUrl||item.url||"#");
-  const badges=(item.retracted?'<span class="result-badge result-warning">Retraction signal</span>':"")+(item.updated&&!item.retracted?'<span class="result-badge result-update">Updated record</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':(item.licenseSignal?'<span class="result-badge">License signal</span>':""))+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
+  const badges=(item.retracted?'<span class="result-badge result-warning">Retraction signal</span>':"")+(item.updated&&!item.retracted?'<span class="result-badge result-update">Updated record</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':(item.licenseSignal?'<span class="result-badge">License signal</span>':""))+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"")+(item.sourceCount>1?'<span class="result-badge">Both indexes</span>':"");
   const links=(item.fullTextUrl?'<a href="'+safeHref(item.fullTextUrl)+'" target="_blank" rel="noopener">Full text ↗</a>':"")+(item.doi?'<a href="https://doi.org/'+encodeURIComponent(item.doi)+'" target="_blank" rel="noopener">DOI ↗</a>':"")+(item.sourceUrl?'<a href="'+safeHref(item.sourceUrl)+'" target="_blank" rel="noopener">Source record ↗</a>':"");
   const why=matchSummary(item,currentPlan||{terms:[],intent:"literature"});
   return '<article class="result" data-record-id="'+esc(item.id)+'"><div class="result-tools"><span class="match-summary" title="Signals used in result ordering">Why this result: '+esc(why)+'</span><label class="compare-toggle"><input type="checkbox" data-compare="'+esc(item.id)+'" '+(compared?"checked":"")+'> Compare</label><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button></div><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
