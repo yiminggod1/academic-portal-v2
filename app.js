@@ -138,7 +138,7 @@ function mapOpenAlex(w){
     id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title||"Untitled",
     authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),
     authorObjects:(w.authorships||[]).slice(0,6).map(a=>({given:a.author?.display_name||"",family:"",orcid:a.author?.orcid||""})).filter(a=>a.given),
-    venue:w.primary_location?.source?.display_name||"",year:String(w.publication_year||""),
+    venue:w.primary_location?.source?.display_name||"",venueId:w.primary_location?.source?.id||"",year:String(w.publication_year||""),
     cited:w.cited_by_count||0,doi:String(w.doi||"").replace(/^https?:\/\/doi\.org\//i,""),
     abstract:reconstructInverted(w.abstract_inverted_index),
     url:w.primary_location?.landing_page_url||w.doi||w.id,sourceUrl:w.id,
@@ -173,7 +173,7 @@ async function searchOpenAlex(q,from,to,sort,page=1){
   if(sort==="newest")p.set("sort","publication_date:desc");
   if(sort==="cited")p.set("sort","cited_by_count:desc");
   const data=await request("https://api.openalex.org/works?"+p);
-  return{items:(data.results||[]).map(mapOpenAlex),nextPage:(data.meta?.count&&data.results?.length===50)?page+1:null};
+  return{items:(data.results||[]).map(mapOpenAlex),nextPage:(data.results?.length===50)?page+1:null};
 }
 async function searchCrossref(q,from,to,cursor="*"){
   const p=new URLSearchParams({query:q,rows:"50",cursor});
@@ -362,7 +362,7 @@ async function run(raw){
     if(runId!==searchRun)return;
     let data=dedupe(settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value.items||[]));
     window.__academicPaging={
-      openalex:Math.max(1,...settled.filter(x=>x.status==="fulfilled").map(x=>x.value.nextPage||1)),
+      openalex:Math.max(0,...settled.filter(x=>x.status==="fulfilled").map(x=>x.value.nextPage||0)),
       crossref:settled.filter(x=>x.status==="fulfilled").map(x=>x.value.nextCursor||"").find(Boolean)||""
     };
     if(oaOnly)data=data.filter(x=>!!x.openAccess);
@@ -427,10 +427,10 @@ results?.parentElement?.addEventListener("click",async e=>{
   try{
     const plan=currentPlan;if(!plan)return;
     const from=$("#fromYear").value,to=$("#toYear").value,source=$("#source").value,sort=$("#sort").value;
-    const page=window.__academicPaging?.openalex||1,cursor=window.__academicPaging?.crossref||"";
+    const page=window.__academicPaging?.openalex||0,cursor=window.__academicPaging?.crossref||"";
     const jobs=[];
-    if(source==="all"||source==="openalex")jobs.push(searchOpenAlex(plan.search,from,to,sort,page+1));
-    if(source==="all"||source==="crossref")jobs.push(searchCrossref(plan.search,from,to,cursor||"*"));
+    if((source==="all"||source==="openalex")&&page>0)jobs.push(searchOpenAlex(plan.search,from,to,sort,page));
+    if((source==="all"||source==="crossref")&&cursor)jobs.push(searchCrossref(plan.search,from,to,cursor));
     const more=await Promise.allSettled(jobs);
     const extra=dedupe(more.filter(x=>x.status==="fulfilled").flatMap(x=>x.value.items||[])).filter(x=>!dataCache.some(y=>y.id===x.id));
     dataCache=dedupe([...dataCache,...extra]);
@@ -444,9 +444,9 @@ results?.parentElement?.addEventListener("click",async e=>{
     window.__academicPaging.openalex=more.filter(x=>x.status==="fulfilled").map(x=>x.value.nextPage||null).find(Boolean)||null;
     window.__academicPaging.crossref=more.filter(x=>x.status==="fulfilled").map(x=>x.value.nextCursor||"").find(Boolean)||"";
     if(status)status.textContent=extra.length?extra.length+" more results loaded.":"No additional results available.";
-    if(!window.__academicPaging.openalex&&!window.__academicPaging.crossref)button.disabled=true;
+    if(!window.__academicPaging.openalex&&!window.__academicPaging.crossref)button.hidden=true;
   }catch{if(status)status.textContent="Could not load more results. Try again."}
-  finally{button.disabled=false;}
+  finally{if(!button.hidden)button.disabled=false;}
 });
 $("#source")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
 $("#sort")?.addEventListener("change",()=>{if(queryInput.value.trim()){syncUrl();run(queryInput.value)}});
