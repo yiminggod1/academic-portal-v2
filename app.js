@@ -24,7 +24,8 @@ function relatedQueries(plan){
  const seen=new Set();return out.filter(x=>x.trim()&&!seen.has(x.toLowerCase())&&seen.add(x.toLowerCase())).slice(0,3)
 }
 function intentLabel(i){return({identifier:"Identifier lookup",author:"Author-focused search",venue:"Publication venue search",latest:"Recent research",review:"Review / literature survey",definition:"Concept / definition",howto:"How-to / methods",mechanism:"How it works / mechanism",causes:"Causes / explanation",comparison:"Comparison / evidence",literature:"Literature discovery"})[i]||"Literature discovery"}
-function evidenceExcerpt(textValue,terms){const text=clean(textValue);if(!text)return"";const sentences=text.split(/(?<=[.!?])\s+/);let best=sentences[0]||text,bestScore=0;sentences.forEach(s=>{const low=s.toLowerCase();const score=terms.reduce((n,t)=>n+(low.includes(t)?1:0),0);if(score>bestScore){best=s;bestScore=score}});return best.slice(0,420)}\nfunction buildAnswerLayer(plan,data,failed,entities=[]){
+function evidenceExcerpt(textValue,terms){const text=clean(textValue);if(!text)return"";const sentences=text.split(/(?<=[.!?])\s+/);let best=sentences[0]||text,bestScore=0;sentences.forEach(s=>{const low=s.toLowerCase();const score=terms.reduce((n,t)=>n+(low.includes(t)?1:0),0);if(score>bestScore){best=s;bestScore=score}});return best.slice(0,420)}
+function buildAnswerLayer(plan,data,failed,entities=[]){
  if(!answerEl)return;
  const evidence=data.filter(x=>x.abstract).slice(0,3);
  const question=plan.core||plan.search;
