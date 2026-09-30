@@ -177,8 +177,9 @@ function mapCrossref(w){
   const external=w.URL||(w.DOI?"https://doi.org/"+w.DOI:"");
   const preferredLink=(w.link||[]).find(l=>/application\/pdf/i.test(l?.["content-type"]||""))||w.link?.find(l=>l?.URL);
   const fullTextUrl=preferredLink?.URL||"";
-  const openAccess=Array.isArray(w.license)&&w.license.length>0;
   const licenseUrl=w.license?.find(x=>x?.URL)?.URL||"";
+  const licenseSignal=!!licenseUrl;
+  const openAccess=/creativecommons\.org|publicdomain/i.test(licenseUrl);
   return{
     id:"cr:"+key,title:w.title?.[0]||"Untitled",
     authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),
@@ -186,7 +187,7 @@ function mapCrossref(w){
     venue:w["container-title"]?.[0]||"",
     year:String(((w.published?.["date-parts"]?.[0]||[])[0]||"")),
     cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),
-    url:external,sourceUrl:external,fullTextUrl,openAccess,licenseUrl,
+    url:external,sourceUrl:external,fullTextUrl,openAccess,licenseUrl,licenseSignal,
     updated:Array.isArray(w["update-to"])&&w["update-to"].length>0,
     updateTypes:(w["update-to"]||[]).map(x=>x.type||x.label).filter(Boolean),
     retracted:Array.isArray(w["update-to"])&&w["update-to"].some(x=>String(x.type||"").toLowerCase()==="retraction"),
@@ -237,6 +238,7 @@ function mergeRecords(old,item){
   if((item.abstract||"").length>(merged.abstract||"").length)merged.abstract=item.abstract;
   merged.cited=Math.max(Number(old.cited)||0,Number(item.cited)||0);
   merged.openAccess=!!old.openAccess||!!item.openAccess;
+  merged.licenseSignal=!!old.licenseSignal||!!item.licenseSignal;
   merged.retracted=!!old.retracted||!!item.retracted;
   merged.updated=!!old.updated||!!item.updated;
   merged.updateTypes=[...new Set([...(old.updateTypes||[]),...(item.updateTypes||[])])];
@@ -247,6 +249,7 @@ function mergeRecords(old,item){
   if(item.venueId)merged.venueId=item.venueId;
   if(item.fullTextUrl)merged.fullTextUrl=item.fullTextUrl;
   if(item.licenseUrl)merged.licenseUrl=item.licenseUrl;
+  if(item.licenseSignal)merged.licenseSignal=true;
   if(item.sourceUrl&&String(item.sourceUrl).includes("openalex.org"))merged.sourceUrl=item.sourceUrl;
   if(item.pageUrl)merged.pageUrl=item.pageUrl;
   if(item.retracted)merged.retracted=true;
@@ -349,7 +352,7 @@ function resultCard(item){
   const saved=getSaved().some(x=>x.id===item.id);
   const compared=getCompared().some(x=>x.id===item.id);
   const href=safeHref(item.oaId?"article.html?id="+encodeURIComponent(item.oaId):item.pageUrl||item.url||"#");
-  const badges=(item.retracted?'<span class="result-badge result-warning">Retraction signal</span>':"")+(item.updated&&!item.retracted?'<span class="result-badge result-update">Updated record</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':"")+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
+  const badges=(item.retracted?'<span class="result-badge result-warning">Retraction signal</span>':"")+(item.updated&&!item.retracted?'<span class="result-badge result-update">Updated record</span>':"")+(item.openAccess?'<span class="result-badge result-oa">Open access</span>':(item.licenseSignal?'<span class="result-badge">License signal</span>':""))+(item.fullTextUrl?'<span class="result-badge">Full text</span>':"")+(item.abstract?'<span class="result-badge">Abstract</span>':"");
   const links=(item.fullTextUrl?'<a href="'+safeHref(item.fullTextUrl)+'" target="_blank" rel="noopener">Full text ↗</a>':"")+(item.doi?'<a href="https://doi.org/'+encodeURIComponent(item.doi)+'" target="_blank" rel="noopener">DOI ↗</a>':"")+(item.sourceUrl?'<a href="'+safeHref(item.sourceUrl)+'" target="_blank" rel="noopener">Source record ↗</a>':"");
   const why=matchSummary(item,currentPlan||{terms:[],intent:"literature"});
   return '<article class="result" data-record-id="'+esc(item.id)+'"><div class="result-tools"><span class="match-summary" title="Signals used in result ordering">Why this result: '+esc(why)+'</span><label class="compare-toggle"><input type="checkbox" data-compare="'+esc(item.id)+'" '+(compared?"checked":"")+'> Compare</label><button class="save" data-save="'+esc(item.id)+'">'+(saved?"Saved":"Save")+'</button></div><h2><a class="result-link" href="'+href+'">'+esc(item.title)+'</a></h2><div class="meta">'+esc(item.authors||"Unknown authors")+" · "+esc(item.venue||"Unknown venue")+" · "+esc(item.year||"n.d.")+(item.cited!=null?" · "+esc(item.cited)+" citations":"")+'</div><div class="result-badges">'+badges+'</div>'+(item.abstract?'<p class="abstract">'+esc(item.abstract.slice(0,650))+(item.abstract.length>650?"…":"")+'</p>':"")+'<div class="links">'+links+'</div></article>';
