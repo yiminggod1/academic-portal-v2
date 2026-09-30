@@ -293,6 +293,33 @@ function relevanceScore(item,plan){
   if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
   return score;
 }
+function buildAnswer(plan,data,failed,entityResult){
+  if(!answerEl)return;
+  const evidence=data.filter(x=>x.abstract).slice(0,3);
+  const oa=data.filter(x=>x.openAccess).length,doi=data.filter(x=>x.doi).length,abstracts=data.filter(x=>x.abstract).length;
+  const next=({
+    latest:"Use Newest sorting to emphasize publication date.",
+    review:"Start with review or survey records, then follow their references and related work.",
+    definition:"Use an overview or review as the starting point, then inspect the primary studies.",
+    howto:"Look for methods and protocols, then verify the procedure in the original source.",
+    comparison:"Compare multiple papers or systematic reviews; search relevance alone cannot establish a universal best choice.",
+    access:"Use records marked Open Access and verify the license or full-text source before relying on it.",
+    mechanism:"Compare several abstracts because mechanisms can depend on the system and study design.",
+    causes:"Compare several studies and reviews before treating a proposed cause as established.",
+    author:"The author cards below are entity matches; use the works to inspect the person's research directly.",
+    venue:"The venue cards below are entity matches; use them to browse the publication's recent work.",
+    identifier:"This is an exact identifier lookup; verify the DOI record before formal citation.",
+    literature:"Open the closest matches, compare abstracts, then follow authors, venues and related work."
+  })[plan.intent]||"Open the closest matches, compare abstracts, then follow authors, venues and related work.";
+  const entityHtml=entityResult?.items?.length?'<div class="answer-entities"><div class="evidence-label">'+esc(entityResult.type==="author"?"PEOPLE":"PUBLICATION VENUES")+'</div>'+entityResult.items.slice(0,3).map(e=>'<a class="entity-card" href="'+safeHref(e.href)+'"><strong>'+esc(e.name)+'</strong><span>'+esc(entityResult.type==="author"?(e.works||0)+" works · "+(e.citations||0)+" citations":(e.works||0)+" works indexed")+'</span>'+(e.institution?'<span>'+esc(e.institution)+'</span>':"")+(e.publisher?'<span>'+esc(e.publisher)+(e.issn?" · ISSN "+esc(e.issn):"")+'</span>':"")+'</a>').join("")+'</div>':"";
+  const evidenceHtml=evidence.length?'<div class="evidence-grid">'+evidence.map(x=>'<article><div class="evidence-label">EVIDENCE FROM RECORD</div><h3 class="evidence-title">'+esc(x.title)+'</h3><p>'+esc(evidenceExcerpt(x.abstract,plan.terms))+(x.abstract.length>420?"…":"")+'</p><a href="'+safeHref(x.oaId?"article.html?id="+encodeURIComponent(x.oaId):x.pageUrl||x.url||"#")+'">Read the record →</a></article>').join("")+'</div>':'<div class="note">No abstracts were returned for the leading matches. Open the records or broaden the search for more context.</div>';
+  answerEl.innerHTML='<div class="answer-head"><div><span class="section-label">SEARCH INTERPRETATION</span><h2>'+esc(intentLabel(plan.intent))+'</h2></div><span class="answer-query">'+esc(plan.search)+'</span></div><p class="answer-summary">I interpreted your query as <strong>'+esc(plan.core)+'</strong>. The answer area uses traceable metadata and excerpts from returned scholarly records rather than inventing a conclusion.</p><div class="answer-stats"><span>'+data.length+' records</span><span>'+abstracts+' abstracts</span><span>'+doi+' DOI</span><span>'+oa+' OA signals</span></div>'+evidenceHtml+'<p class="answer-next"><strong>Next step:</strong> '+esc(next)+(failed?' One scholarly index was unavailable.':"")+'</p>'+entityHtml;
+  const queries=relatedQueries(plan);
+  if(suggestionsEl)suggestionsEl.innerHTML=queries.map(q=>'<a href="?q='+encodeURIComponent(q)+'">'+esc(q)+'</a>').join("");
+  const pathLinks=[["Reviews","review"],["Latest","latest"],["Methods","howto"],["Open access","access"]].map(([label,mode])=>'<a class="research-path" href="search.html?q='+encodeURIComponent(plan.core)+'&mode='+encodeURIComponent(mode)+'">'+esc(label)+'</a>').join("");
+  const paths=document.createElement("div");paths.className="research-paths";paths.innerHTML='<span class="path-label">Research paths</span>'+pathLinks;
+  answerEl.querySelector(".answer-next")?.before(paths);
+}
 function matchSummary(item,plan){
   const terms=plan.terms;
   const titleHits=terms.filter(t=>(item.title||"").toLowerCase().includes(t)).length;
