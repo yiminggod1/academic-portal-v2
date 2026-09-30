@@ -8,14 +8,22 @@ function reconstruct(idx){if(!idx)return"";const words=[];Object.entries(idx).fo
 function readSaved(){try{return JSON.parse(localStorage.getItem("academicSaved")||"[]")}catch{return[]}}
 function saved(id){return readSaved().some(x=>x.id===id)}
 function addSave(x){let list=readSaved();list=[x,...list.filter(y=>y.id!==x.id)].slice(0,100);localStorage.setItem("academicSaved",JSON.stringify(list));const button=document.querySelector("#saveArticle");if(button)button.textContent="Saved"}
-async function request(url){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);try{const response=await fetch(url,{signal:controller.signal});if(!response.ok)throw new Error("Request failed");return await response.json()}finally{clearTimeout(timer)}}
-async function related(work){
-  const ids=Array.isArray(work.related_works)?work.related_works:[];
-  if(ids.length)return Promise.all(ids.slice(0,8).map(id=>request("https://api.openalex.org/works/"+encodeURIComponent(String(id).split("/").pop())).catch(()=>null))).then(x=>x.filter(Boolean));
-  const query=work.display_name||work.title||"";
-  if(!query)return[];
-  const data=await request("https://api.openalex.org/works?"+new URLSearchParams({search:query,per_page:"8"}));
-  return data.results||[];
+async function request(url){
+  let lastError;
+  for(let attempt=0;attempt<3;attempt++){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch(url,{signal:controller.signal});
+      if(response.ok)return await response.json();
+      lastError=new Error("HTTP "+response.status);
+      if(![429,500,502,503,504].includes(response.status))throw lastError;
+    }catch(error){
+      lastError=error;
+      if(attempt===2)throw error;
+    }finally{clearTimeout(timer)}
+    await new Promise(resolve=>setTimeout(resolve,450*(attempt+1)));
+  }
+  throw lastError||new Error("Request failed");
 }
 function authorLink(a){const name=a.author?.display_name||"Unknown author",id=a.author?.id?.split("/").pop()||"";return '<a href="author.html?'+(id?"id="+encodeURIComponent(id)+"&":"")+"name="+encodeURIComponent(name)+'">'+esc(name)+'</a>'}
 function localHistory(id,title,authors,venue,year){
@@ -31,7 +39,7 @@ async function loadWork(){
     return {source:"OpenAlex",recordId:"oa:"+rawId,work:await request("https://api.openalex.org/works/"+encodeURIComponent(id))};
   }
   if(doiParam){
-    const doi=doiParam.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").trim();
+    const doi=doiParam.replace(/^doi:\s*/i,"").replace(/^doi\s+/i,"").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,"").replace(/^doi\.org\//i,"").replace(/[.,;)>]+$/,"").trim();
     const data=await request("https://api.crossref.org/v1/works/"+encodeURIComponent(doi));
     const authors=(data.message?.author||[]).map(a=>({author:{display_name:[a.given,a.family].filter(Boolean).join(" ")}}));
     const work={id:"https://doi.org/"+doi,display_name:data.message?.title?.[0]||"Untitled",title:data.message?.title?.[0]||"Untitled",authorships:authors,abstract:data.message?.abstract||"",publication_date:data.message?.published?.["date-parts"]?.[0]?.join("-")||"",publication_year:data.message?.published?.["date-parts"]?.[0]?.[0]||"",cited_by_count:data.message?.["is-referenced-by-count"]||0,type:data.message?.type||"journal-article",doi:"https://doi.org/"+doi,primary_location:{source:{display_name:data.message?.["container-title"]?.[0]||"Unknown venue"}},fullTextUrl:data.message?.link?.find(l=>l?.URL)?.URL||"",related_works:[]};
