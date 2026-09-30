@@ -1,1 +1,17 @@
-const root=document.querySelector("#recentList"),esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));async function request(url){const c=new AbortController(),t=setTimeout(()=>c.abort(),10000);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error();return await r.json()}finally{clearTimeout(t)}}const end=new Date(),start=new Date(end);start.setDate(end.getDate()-30);const iso=d=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return y+"-"+m+"-"+day};request("https://api.openalex.org/works?"+new URLSearchParams({filter:"from_publication_date:"+iso(start)+",to_publication_date:"+iso(end),sort:"publication_date:desc",per_page:"30"})).then(j=>{root.innerHTML=(j.results||[]).map(w=>{const a=(w.authorships||[]).slice(0,6).map(x=>x.author?.display_name).filter(Boolean).join(", ");return '<article class="result"><div><span class="tag">OpenAlex</span> '+esc(w.publication_date||w.publication_year||"")+'</div><h2><a href="article.html?id='+encodeURIComponent(w.id)+'">'+esc(w.display_name||w.title)+'</a></h2><div class="meta">'+esc(a)+' · '+esc(w.primary_location?.source?.display_name||"Unknown venue")+' · '+esc(w.cited_by_count||0)+' citations</div></article>'}).join("")||'<div class="note">No records returned from the last 30 days.</div>'}).catch(()=>root.innerHTML='<div class="note">The live scholarly index is temporarily unavailable. Please return later or use Search.</div>');
+const root=document.querySelector("#recentList"),esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));async function request(url){
+  let lastError;
+  for(let attempt=0;attempt<3;attempt++){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch(url,{signal:controller.signal});
+      if(response.ok)return await response.json();
+      lastError=new Error("HTTP "+response.status);
+      if(![429,500,502,503,504].includes(response.status))throw lastError;
+    }catch(error){
+      lastError=error;
+      if(attempt===2)throw error;
+    }finally{clearTimeout(timer)}
+    await new Promise(resolve=>setTimeout(resolve,450*(attempt+1)));
+  }
+  throw lastError||new Error("Request failed");
+}const end=new Date(),start=new Date(end);start.setDate(end.getDate()-30);const iso=d=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return y+"-"+m+"-"+day};request("https://api.openalex.org/works?"+new URLSearchParams({filter:"from_publication_date:"+iso(start)+",to_publication_date:"+iso(end),sort:"publication_date:desc",per_page:"30"})).then(j=>{root.innerHTML=(j.results||[]).map(w=>{const a=(w.authorships||[]).slice(0,6).map(x=>x.author?.display_name).filter(Boolean).join(", ");return '<article class="result"><div><span class="tag">OpenAlex</span> '+esc(w.publication_date||w.publication_year||"")+'</div><h2><a href="article.html?id='+encodeURIComponent(w.id)+'">'+esc(w.display_name||w.title)+'</a></h2><div class="meta">'+esc(a)+' · '+esc(w.primary_location?.source?.display_name||"Unknown venue")+' · '+esc(w.cited_by_count||0)+' citations</div></article>'}).join("")||'<div class="note">No records returned from the last 30 days.</div>'}).catch(()=>root.innerHTML='<div class="note">The live scholarly index is temporarily unavailable. Please return later or use Search.</div>');
