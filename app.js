@@ -293,6 +293,17 @@ function relevanceScore(item,plan){
   if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
   return score;
 }
+function evidenceExcerpt(value,terms){
+  const text=clean(value);if(!text)return"";
+  const sentences=text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  let best=sentences[0]||text,bestScore=-1;
+  for(const sentence of sentences){
+    const low=sentence.toLowerCase();
+    const score=(terms||[]).reduce((n,t)=>n+(low.includes(t)?1:0),0);
+    if(score>bestScore){bestScore=score;best=sentence}
+  }
+  return best.slice(0,420);
+}
 function buildAnswer(plan,data,failed,entityResult){
   if(!answerEl)return;
   const evidence=data.filter(x=>x.abstract).slice(0,3);
