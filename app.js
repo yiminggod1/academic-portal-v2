@@ -81,7 +81,7 @@ function intentLabel(intent){
   return({identifier:"Identifier lookup",author:"Author-focused search",venue:"Publication venue search",latest:"Recent research",review:"Review / literature survey",definition:"Concept / definition",howto:"How-to / methods",mechanism:"How it works / mechanism",causes:"Causes / explanation",comparison:"Comparison / evidence",access:"Full-text / access-focused search",literature:"Literature discovery"})[intent]||"Literature discovery";
 }
 
-async async function request(url){
+async function request(url){
   let lastError;
   for(let attempt=0;attempt<3;attempt++){
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
