@@ -52,9 +52,9 @@ jobs:
           const app = fs.readFileSync('app.js','utf8');
           const article = fs.readFileSync('article.js','utf8');
           const saved = fs.readFileSync('saved.js','utf8');
-          if (!app.includes('data-compare') || !app.includes('function matchSummary') || !app.includes('function relevanceScore') || !app.includes('function evidenceExcerpt')) throw new Error('Search differentiation layer is missing');
+          if (!app.includes('data-compare') || !app.includes('function matchSummary') || !app.includes('function relevanceScore') || !app.includes('function evidenceExcerpt') || !app.includes('function normalizeMatchText') || !app.includes('sourceCount')) throw new Error('Search quality layer is missing');
           if (!app.includes('function buildAnswer')) throw new Error('Search evidence rendering layer is missing');
-          if (!article.includes('async function related(work)') || !article.includes('async function references(work)')) throw new Error('Article research relationship layer is missing');
+          if (!article.includes('async function related(work)') || !article.includes('async function references(work)') || !article.includes('async function citedBy(work)') || !article.includes('function relationReasons')) throw new Error('Article research relationship layer is missing');
           if (!article.includes('savePaperNote') || !article.includes('academicNotes')) throw new Error('Per-paper notes are missing');
           if (!saved.includes('Export BibTeX') && !fs.readFileSync('saved.html','utf8').includes('Export BibTeX')) throw new Error('Citation export UI is missing');
           console.log('Static QA passed for '+htmlFiles.length+' HTML pages.');
