@@ -36,15 +36,6 @@ async function related(work){
   if(!query)return[];
   const data=await request("https://api.openalex.org/works?"+new URLSearchParams({search:query,per_page:"8"}));
   return data.results||[];
-}async function related(work){
-  const ids=Array.isArray(work.related_works)?work.related_works:[];
-  if(ids.length){
-    return Promise.all(ids.slice(0,8).map(id=>request("https://api.openalex.org/works/"+encodeURIComponent(String(id).split("/").pop())).catch(()=>null))).then(x=>x.filter(Boolean));
-  }
-  const query=work.display_name||work.title||"";
-  if(!query)return[];
-  const data=await request("https://api.openalex.org/works?"+new URLSearchParams({search:query,per_page:"8"}));
-  return data.results||[];
 }async function references(work){
   const ids=Array.isArray(work.referenced_works)?work.referenced_works:[];
   if(!ids.length)return[];
