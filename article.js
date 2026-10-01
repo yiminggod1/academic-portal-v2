@@ -54,8 +54,10 @@ function relationReasons(item,work,kind){
   const reasons=[];
   if(kind==="references"){reasons.push("Referenced by this paper");return reasons}
   const aIds=new Set((work.authorships||[]).map(x=>x.author?.id).filter(Boolean));
-  const bIds=(item.authorships||[]).map(x=>x.author?.id).filter(Boolean);
-  if((aIds.size&&bIds.some(id=>aIds.has(id)))||(!aIds.size&&bIds.some(id=>norm((item.authorships||[]).find(x=>x.author?.id===id)?.author?.display_name).includes(norm((work.authorships||[]).find(x=>x.author?.display_name)?.author?.display_name||"")))))reasons.push("shared author");
+  const bIds=new Set((item.authorships||[]).map(x=>x.author?.id).filter(Boolean));
+  const aNames=new Set((work.authorships||[]).map(x=>norm(x.author?.display_name)).filter(Boolean));
+  const bNames=(item.authorships||[]).map(x=>norm(x.author?.display_name)).filter(Boolean);
+  if((aIds.size&&[...bIds].some(id=>aIds.has(id)))||(!aIds.size&&bNames.some(name=>aNames.has(name))))reasons.push("shared author");
   const va=norm(work.primary_location?.source?.id||work.primary_location?.source?.display_name||"");
   const vb=norm(item.primary_location?.source?.id||item.primary_location?.source?.display_name||"");
   if(va&&vb&&va===vb)reasons.push("same venue");
