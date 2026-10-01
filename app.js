@@ -50,17 +50,20 @@ function searchVariants(core){
 function hasExactPhrase(item,core){
   const phrase=core.trim().toLowerCase().replace(/\s+/g," ");
   if(!phrase)return false;
-  return String(item.title||"").toLowerCase().replace(/\s+/g," ").includes(phrase);
+  const fields=[item.title,item.abstract,item.authors,item.venue].map(x=>String(x||"").toLowerCase().replace(/\s+/g," "));
+  return fields.some(field=>field.includes(phrase));
 }
 function parseQueryHints(q){
   const raw=q.trim();
-  const authorMatch=raw.match(/^author\s*:\s*(.+)$/i);
-  const journalMatch=raw.match(/^(?:journal|venue)\s*:\s*(.+)$/i);
   const phraseMatch=raw.match(/"([^"]+)"/);
+  const authorMatch=raw.match(/\bauthor\s*:\s*(?:"([^"]+)"|(\S+))/i);
+  const journalMatch=raw.match(/\b(?:journal|venue)\s*:\s*(?:"([^"]+)"|(\S+))/i);
+  let remainder=raw.replace(/"[^"]+"/g," ").replace(/\bauthor\s*:\s*(?:"[^"]+"|\S+)/ig," ").replace(/\b(?:journal|venue)\s*:\s*(?:"[^"]+"|\S+)/ig," ").replace(/\s+/g," ").trim();
   return{
-    author:authorMatch?.[1]?.trim()||"",
-    venue:journalMatch?.[1]?.trim()||"",
-    phrase:phraseMatch?.[1]?.replace(/\s+/g," ").trim()||""
+    author:(authorMatch?.[1]||authorMatch?.[2]||"").trim(),
+    venue:(journalMatch?.[1]||journalMatch?.[2]||"").trim(),
+    phrase:phraseMatch?.[1]?.replace(/\s+/g," ").trim()||"",
+    remainder
   };
 }
 function intentOf(q){
@@ -89,7 +92,14 @@ function modeIntent(){
   return mode==="auto"?"":mode;
 }
 function planQuery(q){
-  const forced=modeIntent(),intent=forced||intentOf(q),hints=parseQueryHints(q),operatorCore=hints.author||hints.venue||hints.phrase,core=intent==="identifier"?normalizeDoi(q):(operatorCore||stripQuestion(q)||q.trim());
+  const forced=modeIntent(),intent=forced||intentOf(q),hints=parseQueryHints(q);
+  const semanticParts=[];
+  if(hints.remainder)semanticParts.push(stripQuestion(hints.remainder));
+  if(hints.phrase)semanticParts.push(hints.phrase);
+  if(hints.author&&!hints.remainder&&!hints.phrase)semanticParts.push(hints.author);
+  if(hints.venue&&!hints.remainder&&!hints.phrase)semanticParts.push(hints.venue);
+  const semanticCore=semanticParts.filter(Boolean).join(" ").replace(/\s+/g," ").trim();
+  const core=intent==="identifier"?normalizeDoi(q):(semanticCore||stripQuestion(q)||q.trim());
   let search=core;
   if(intent==="latest")search=core+" recent research";
   if(intent==="review")search=/\breview\b/i.test(core)?core:core+" review";
