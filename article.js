@@ -124,7 +124,7 @@ async function run(){
     try{
       const oaData=await request("https://api.openalex.org/works?"+new URLSearchParams({search:loaded.work.doi||doiParam,per_page:"3"}));
       const oaMatch=(oaData.results||[]).find(x=>String(x.doi||"").toLowerCase().replace(/^https?:\/\/doi\.org\//i,"")===String(loaded.work.doi||doiParam).toLowerCase().replace(/^https?:\/\/doi\.org\//i,""));
-      if(oaMatch)w={...loaded.work,...oaMatch,abstract_inverted_index:oaMatch.abstract_inverted_index||undefined};
+      if(oaMatch)w={...loaded.work,...oaMatch,update_to:loaded.work.update_to||oaMatch.update_to||[],abstract_inverted_index:oaMatch.abstract_inverted_index||undefined};
     }catch{}
   }
   const networkWork=w;
