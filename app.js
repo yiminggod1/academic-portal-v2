@@ -161,6 +161,7 @@ function mapOpenAlex(w){
   return{
     id:"oa:"+w.id,oaId:w.id,title:w.display_name||w.title||"Untitled",
     authors:(w.authorships||[]).slice(0,6).map(a=>a.author?.display_name).filter(Boolean).join(", "),
+    authorIds:(w.authorships||[]).slice(0,6).map(a=>a.author?.id).filter(Boolean),
     authorObjects:(w.authorships||[]).slice(0,6).map(a=>({given:a.author?.display_name||"",family:"",orcid:a.author?.orcid||""})).filter(a=>a.given),
     venue:w.primary_location?.source?.display_name||"",venueId:w.primary_location?.source?.id||"",year:String(w.publication_year||""),
     cited:w.cited_by_count||0,doi:String(w.doi||"").replace(/^https?:\/\/doi\.org\//i,""),
@@ -169,7 +170,9 @@ function mapOpenAlex(w){
     fullTextUrl:w.open_access?.is_oa?(w.best_oa_location?.pdf_url||w.best_oa_location?.landing_page_url||""):"",
     referencedWorks:Array.isArray(w.referenced_works)?w.referenced_works.slice(0,8):[],
     openAccess:!!w.open_access?.is_oa,retracted:!!w.is_retracted,updated:false,updateTypes:[],
-    topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4),sources:["OpenAlex"],sourceCount:1
+    topics:(w.topics||[]).map(t=>t.display_name).filter(Boolean).slice(0,4),
+    topicIds:(w.topics||[]).map(t=>t.id).filter(Boolean).slice(0,6),sourceId:w.primary_location?.source?.id||"",
+    sources:["OpenAlex"],sourceCount:1
   };
 }
 function mapCrossref(w){
@@ -183,7 +186,7 @@ function mapCrossref(w){
   return{
     id:"cr:"+key,title:w.title?.[0]||"Untitled",
     authors:(w.author||[]).slice(0,6).map(a=>[a.given,a.family].filter(Boolean).join(" ")).join(", "),
-    authorObjects:(w.author||[]).slice(0,6).map(a=>({given:a.given||"",family:a.family||"",orcid:a.ORCID||""})),
+    authorObjects:(w.author||[]).slice(0,6).map(a=>({given:a.given||"",family:a.family||"",orcid:a.ORCID||"unknown"})),
     venue:w["container-title"]?.[0]||"",
     year:String(((w.published?.["date-parts"]?.[0]||[])[0]||"")),
     cited:w["is-referenced-by-count"]||0,doi:w.DOI||"",abstract:clean(w.abstract||""),
@@ -244,7 +247,9 @@ function mergeRecords(old,item){
   merged.updateTypes=[...new Set([...(old.updateTypes||[]),...(item.updateTypes||[])])];
   merged.topics=[...new Set([...(old.topics||[]),...(item.topics||[])])].slice(0,6);
   merged.authorObjects=old.authorObjects?.length?old.authorObjects:(item.authorObjects||[]);
+  merged.authorIds=[...new Set([...(old.authorIds||[]),...(item.authorIds||[])])].slice(0,8);
   merged.referencedWorks=old.referencedWorks?.length?old.referencedWorks:(item.referencedWorks||[]);
+  merged.topicIds=[...new Set([...(old.topicIds||[]),...(item.topicIds||[])])].slice(0,8);
   merged.sources=[...new Set([...(old.sources||[]),...(item.sources||[])])];
   merged.sourceCount=merged.sources.length||1;
   if(item.oaId)merged.oaId=item.oaId;
@@ -285,58 +290,76 @@ function tokenForms(term){
   return [...new Set(forms)];
 }
 function fieldHitCount(value,terms){
-  const text=normalizeMatchText(value),words=new Set(text.split(" ").filter(Boolean));
-  return (terms||[]).reduce((n,t)=>n+(tokenForms(t).some(f=>words.has(f)||text.includes(f))?1:0),0);
+  const words=new Set(normalizeMatchText(value).split(" ").filter(Boolean));
+  return (terms||[]).reduce((n,t)=>{
+    const forms=tokenForms(t);
+    return n+(forms.some(f=>f.split(" ").length>1?normalizeMatchText(value).includes(f):words.has(f))?1:0);
+  },0);
 }
 function phraseWindowScore(value,terms){
   const words=normalizeMatchText(value).split(" ").filter(Boolean);
   if(!words.length||!(terms||[]).length)return 0;
-  const wanted=[...new Set((terms||[]).flatMap(tokenForms))];
+  const wanted=new Set((terms||[]).flatMap(tokenForms).filter(f=>!f.includes(" ")));
   const positions=[];
-  words.forEach((w,i)=>{if(wanted.includes(w))positions.push(i)});
+  words.forEach((w,i)=>{if(wanted.has(w))positions.push(i)});
   if(positions.length<2)return positions.length?1:0;
   let best=99;
   for(let i=0;i<positions.length;i++)for(let j=i+1;j<Math.min(positions.length,i+8);j++)best=Math.min(best,positions[j]-positions[i]);
   return best<=3?3:best<=6?2:1;
 }
+function rankingSignals(item,plan){
+  const titleHits=fieldHitCount(item.title,plan.terms);
+  const abstractHits=fieldHitCount(item.abstract,plan.terms);
+  const authorHits=fieldHitCount(item.authors,plan.terms);
+  const venueHits=fieldHitCount(item.venue,plan.terms);
+  const total=Math.max(plan.terms?.length||0,1);
+  const titleCoverage=titleHits/total;
+  const abstractCoverage=abstractHits/total;
+  const combinedCoverage=Math.max(titleCoverage,abstractCoverage);
+  return{titleHits,abstractHits,authorHits,venueHits,titleCoverage,abstractCoverage,combinedCoverage};
+}
 function relevanceScore(item,plan){
-  const title=normalizeMatchText(item.title),abstract=normalizeMatchText(item.abstract),authors=normalizeMatchText(item.authors),venue=normalizeMatchText(item.venue);
-  const text=[title,abstract,authors,venue].filter(Boolean).join(" ");
-  const terms=plan.terms||[];
+  const text=normalizeMatchText([item.title,item.abstract,item.authors,item.venue].filter(Boolean).join(" "));
+  const s=rankingSignals(item,plan),terms=plan.terms||[];
   let score=0;
-  const titleHits=fieldHitCount(item.title,terms),abstractHits=fieldHitCount(item.abstract,terms),authorHits=fieldHitCount(item.authors,terms),venueHits=fieldHitCount(item.venue,terms);
-  const matchedFields=Number(titleHits>0)+Number(abstractHits>0)+Number(authorHits>0)+Number(venueHits>0);
-  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=48;
-  else if(plan.exactPhrase&&normalizeMatchText(item.title).includes(normalizeMatchText(plan.exactPhrase)))score+=44;
-  if(plan.core&&normalizeMatchText(item.title)===normalizeMatchText(plan.core))score+=26;
-  score+=titleHits*9+abstractHits*3+authorHits*2+venueHits*2;
-  if(terms.length&&titleHits===terms.length)score+=10;
-  if(terms.length&&abstractHits===terms.length)score+=4;
-  score+=Math.min(6,phraseWindowScore(title,terms)*2);
-  if(terms.length&&matchedFields===0)score-=10;
+  if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))score+=52;
+  else if(plan.exactPhrase&&normalizeMatchText(item.title).includes(normalizeMatchText(plan.exactPhrase)))score+=46;
+  if(plan.core&&normalizeMatchText(item.title)===normalizeMatchText(plan.core))score+=30;
+  score+=s.titleHits*9+s.abstractHits*3+s.authorHits*1.5+s.venueHits*1.5;
+  score+=Math.round(s.titleCoverage*12)+Math.round(s.combinedCoverage*5);
+  if(s.titleHits===terms.length&&terms.length)score+=12;
+  if(s.abstractHits===terms.length&&terms.length)score+=5;
+  score+=phraseWindowScore(item.title,terms)*3;
+  if(s.titleHits===0&&s.abstractHits===0)score-=12;
   if(plan.authorHint){
-    const authorQ=normalizeMatchText(plan.authorHint);
-    if(authors.includes(authorQ))score+=22;
-    else score-=6;
+    const q=normalizeMatchText(plan.authorHint);
+    score+=normalizeMatchText(item.authors).includes(q)?26:-8;
   }
   if(plan.venueHint){
-    const venueQ=normalizeMatchText(plan.venueHint);
-    if(venue.includes(venueQ))score+=22;
-    else score-=5;
+    const q=normalizeMatchText(plan.venueHint);
+    score+=normalizeMatchText(item.venue).includes(q)?26:-7;
   }
-  if(plan.intent==="review"&&/review|survey|meta analysis|systematic review/.test(text))score+=9;
-  if(plan.intent==="definition"&&/overview|fundament|introduction/.test(text))score+=5;
-  if(plan.intent==="howto"&&/method|protocol|procedure|workflow/.test(text))score+=6;
-  if(plan.intent==="mechanism"&&/mechanism|pathway|process/.test(text))score+=6;
-  if(plan.intent==="causes"&&/cause|driver|mechanism|factor/.test(text))score+=5;
-  if(plan.intent==="comparison"&&/compar|versus|vs |trade off|benchmark/.test(text))score+=6;
-  if(plan.intent==="access"&&item.openAccess)score+=8;
+  const intentRegex={
+    review:/review|survey|meta analysis|systematic review/,
+    definition:/overview|fundament|introduction|tutorial/,
+    howto:/method|protocol|procedure|workflow/,
+    mechanism:/mechanism|pathway|process|kinetic/,
+    causes:/cause|driver|mechanism|factor|determin/,
+    comparison:/compar|versus|vs |trade off|benchmark/,
+    access:/open access|full text|preprint/
+  };
+  if(intentRegex[plan.intent]?.test(text))score+=plan.intent==="review"?10:7;
+  if(plan.intent==="access"&&item.openAccess)score+=9;
   if(item.abstract)score+=2;
   if(item.fullTextUrl)score+=2;
   if(item.sourceCount>1)score+=4;
-  if(item.retracted)score-=35;
+  if(item.retracted)score-=40;
   score+=Math.min(6,Math.log10((Number(item.cited)||0)+1));
-  if(item.year){const age=Math.max(0,new Date().getFullYear()-Number(item.year));score+=Math.max(0,3-age*.15)}
+  if(item.year){
+    const age=Math.max(0,new Date().getFullYear()-Number(item.year));
+    const freshness=plan.intent==="latest"?Math.max(0,8-age*.35):Math.max(0,3-age*.12);
+    score+=freshness;
+  }
   return score;
 }
 function evidenceExcerpt(value,terms){
@@ -378,19 +401,16 @@ function buildAnswer(plan,data,failed,entityResult){
   answerEl.querySelector(".answer-next")?.before(paths);
 }
 function matchSummary(item,plan){
-  const terms=plan.terms;
-  const titleHits=terms.filter(t=>(item.title||"").toLowerCase().includes(t)).length;
-  const bodyHits=terms.filter(t=>(item.abstract||"").toLowerCase().includes(t)).length;
-  const flags=[];
+  const terms=plan.terms||[],s=rankingSignals(item,plan),flags=[];
   if(plan.exactPhrase&&hasExactPhrase(item,plan.exactPhrase))flags.push("exact phrase");
+  if(terms.length&&s.titleHits===terms.length)flags.push("all terms in title");
+  else if(s.titleHits)flags.push("title "+s.titleHits+"/"+Math.max(terms.length,1));
+  if(s.abstractHits===terms.length&&terms.length)flags.push("all terms in abstract");
+  else if(s.abstractHits)flags.push("abstract "+s.abstractHits);
   if(item.sourceCount>1)flags.push("both indexes");
-  if(titleHits)flags.push("title "+titleHits+"/"+Math.max(terms.length,1));
-  if(bodyHits)flags.push("abstract "+bodyHits);
   if(item.openAccess)flags.push("OA");
   if(item.fullTextUrl)flags.push("full text");
-  if(plan.intent==="review"&&/review|survey|meta-analysis/i.test(item.title+" "+item.abstract))flags.push("review signal");
-  if(plan.intent==="comparison"&&/compar|versus|vs\.|benchmark/i.test(item.title+" "+item.abstract))flags.push("comparison signal");
-  return flags.slice(0,4).join(" · ")||"keyword match";
+  return flags.slice(0,4).join(" · ")||"low-signal match";
 }
 function resultCard(item){
   const saved=getSaved().some(x=>x.id===item.id);
