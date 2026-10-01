@@ -5,3 +5,10 @@
 .related>a{display:block;padding:10px 12px;border:1px solid var(--soft);background:#fff;color:var(--link);text-decoration:none}
 .related>a:hover{border-color:var(--line);background:var(--wash)}
 @media(max-width:650px){.related{grid-template-columns:1fr}}
+
+.research-path-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:0 0 18px}
+.research-path-list a{display:flex;flex-direction:column;gap:4px;padding:12px 13px;border:1px solid var(--soft);background:#fff;text-decoration:none;color:var(--link)}
+.research-path-list a:hover{border-color:var(--line);background:var(--wash)}
+.research-path-list strong{font-size:13px;font-weight:650}
+.research-path-list span{font-size:12px;line-height:1.45;color:var(--muted)}
+@media(max-width:760px){.research-path-list{grid-template-columns:1fr}}
